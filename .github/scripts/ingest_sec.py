@@ -246,7 +246,8 @@ def main():
     """
     logging.info("--- Starting SEC Cybersecurity Filing Ingestion ---")
     # The name for the portfolio is a local identifier, can be anything.
-    portfolio = Portfolio("cybersecurity_filings", api_key=API_KEY)
+    portfolio = Portfolio("cybersecurity_filings")
+    portfolio.set_api_key(API_KEY)
     processed_filings = get_processed_filings()
 
     # Define the date range for the query (last 2 days to be safe)
