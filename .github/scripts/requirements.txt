@@ -1,5 +1,0 @@
-datamule
-markitdown
-beautifulsoup4
-PyYAML
-lxml
