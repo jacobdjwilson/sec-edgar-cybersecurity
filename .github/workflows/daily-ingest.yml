@@ -41,7 +41,7 @@ jobs:
         env:
           DATA_MULE_API_KEY: ${{ secrets.DATA_MULE_API_KEY }}
         run: |
-          python.github/scripts/main.py
+          python .github/scripts/main.py
 
       - name: Commit and Push Changes
         # This step implements the "Git Scraping" pattern.
