@@ -1,276 +1,407 @@
+#!/usr/bin/env python3
+"""
+SEC Cybersecurity Filings Ingestion Script
+Fetches, parses, and stores SEC 8-K and 10-K cybersecurity disclosures
+"""
 
-import logging
-import time
 import os
+import sys
 import re
-import yaml
-import subprocess
-import pandas as pd
-from pathlib import Path
-from bs4 import BeautifulSoup
-from datamule import Portfolio
 from datetime import datetime, timedelta
+from pathlib import Path
+import json
 
-# --- Configuration ---
-# Get API key from environment variable
-API_KEY = os.getenv("DATA_MULE_API_KEY")
-if not API_KEY:
-    raise ValueError("DATA_MULE_API_KEY environment variable not set.")
-
-# Base paths
-# The script is in .github/scripts, so we need to go up two levels for the repo root
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-DATA_PATH = REPO_ROOT / "data"
-
-PROCESSED_FILINGS_PATH = REPO_ROOT / ".github" / "processed_filings.txt"
-
-# --- Logging Configuration ---
-LOG_DIR = REPO_ROOT / ".github" / "logs"
-LOG_DIR.mkdir(exist_ok=True)
-LOG_FILE = LOG_DIR / "ingestion.log"
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler()
-    ]
-)
-
-# Keywords for filtering 10-K filings (case-insensitive)
-TEN_K_KEYWORDS = ["item 1c", "cybersecurity", "item 407(j)"]
+try:
+    from datamule import DataMule
+    from markitdown import MarkItDown
+    from bs4 import BeautifulSoup
+    import yaml
+except ImportError as e:
+    print(f"Error importing required packages: {e}")
+    print("Please ensure all dependencies are installed: pip install -r requirements.txt")
+    sys.exit(1)
 
 
-def find_relevant_section(soup, form_type):
-    """
-    Finds the relevant HTML section within a filing using BeautifulSoup.
-    Traverses sibling elements to accurately capture the entire section.
-    """
-    body_text = soup.get_text().lower()
-    item_type = None
-    start_tag = None
+class SECCybersecurityIngest:
+    """Main ingestion engine for SEC cybersecurity filings"""
     
-    # Define patterns to find the start of the relevant section
-    patterns = {
-        "8-K": ("item 1.05", "1.05"),
-        "10-K": ("item 1c", "106"),
-        "10-K_alt1": ("cybersecurity", "Risk Management"),
-        "10-K_alt2": ("item 407(j)", "407(j)"),
-    }
+    def __init__(self, api_key=None):
+        self.api_key = api_key or os.environ.get('DATA_MULE_API_KEY')
+        if not self.api_key:
+            raise ValueError("DATA_MULE_API_KEY environment variable must be set")
+        
+        self.mule = DataMule(api_key=self.api_key)
+        self.md_converter = MarkItDown()
+        self.base_path = Path("data")
+        self.base_path.mkdir(exist_ok=True)
+        
+        # Stats tracking
+        self.stats = {
+            'processed': 0,
+            'saved': 0,
+            'skipped': 0,
+            'errors': 0
+        }
     
-    current_pattern_key = None
-    if form_type == "8-K":
-        if patterns["8-K"][0] in body_text:
-            current_pattern_key = "8-K"
-    elif form_type == "10-K":
-        if patterns["10-K"][0] in body_text:
-            current_pattern_key = "10-K"
-        elif patterns["10-K_alt1"][0] in body_text:
-            current_pattern_key = "10-K_alt1"
-        elif patterns["10-K_alt2"][0] in body_text:
-            current_pattern_key = "10-K_alt2"
-
-    if not current_pattern_key:
-        return None, None
+    def get_quarter(self, date_obj):
+        """Determine quarter from date"""
+        month = date_obj.month
+        if month <= 3:
+            return 'Q1'
+        elif month <= 6:
+            return 'Q2'
+        elif month <= 9:
+            return 'Q3'
+        else:
+            return 'Q4'
+    
+    def get_output_path(self, ticker, filing_type, filing_date):
+        """Generate output file path"""
+        date_obj = datetime.strptime(filing_date, '%Y-%m-%d')
+        year = date_obj.year
+        quarter = self.get_quarter(date_obj)
         
-    pattern, item_type = patterns[current_pattern_key]
-    start_tag = soup.find(lambda tag: pattern in tag.get_text(strip=True).lower())
-
-    if not start_tag:
-        return None, None
-
-    # --- New Sibling Traversal Logic ---
-    content_html = []
-    # Regex to stop at the next "Item X.XX"
-    next_item_regex = re.compile(r"item\s+\d+\.\d+", re.IGNORECASE)
-
-    # Find the parent that is a direct child of 'body' if possible, to get a good starting point.
-    # This avoids grabbing siblings from a deeply nested table cell.
-    start_point = start_tag
-    while start_point.parent and start_point.parent.name != 'body':
-        start_point = start_point.parent
-
-    # Traverse through siblings from this starting point
-    for sibling in start_point.find_next_siblings():
-        # If the sibling is a tag and contains the next item, stop.
-        if sibling.name and next_item_regex.search(sibling.get_text(strip=True)):
-            break
-        content_html.append(str(sibling))
-
-    if not content_html:
-         # Fallback to the old method if sibling traversal yields nothing
-        content_element = start_tag.find_parent("div") or start_tag.find_parent("p") or start_tag
-        return str(content_element), item_type
-
-    return "".join(content_html), item_type
-
-
-def convert_html_to_markdown(html_content):
-    """
-    Converts an HTML string to Markdown using the markitdown CLI tool.
-    """
-    # markitdown works with files, so we use temporary files
-    try:
-        with open("temp_input.html", "w", encoding="utf-8") as f_in:
-            f_in.write(html_content)
-
-        # Execute markitdown, telling it to output to a file
-        result = subprocess.run(
-            ["markitdown", "temp_input.html", "-o", "temp_output.md"],
-            capture_output=True, text=True, check=True
-        )
+        # Create directory structure
+        dir_path = self.base_path / str(year) / quarter
+        dir_path.mkdir(parents=True, exist_ok=True)
         
-        with open("temp_output.md", "r", encoding="utf-8") as f_out:
-            markdown_content = f_out.read()
+        # Generate filename
+        filename = f"{ticker}_{filing_type}_{filing_date}.md"
+        return dir_path / filename
+    
+    def extract_relevant_section(self, html_content, filing_type):
+        """Extract cybersecurity-relevant sections from HTML"""
+        soup = BeautifulSoup(html_content, 'lxml')
+        
+        if filing_type == '8-K':
+            # Look for Item 1.05 sections
+            relevant_text = []
             
-        return markdown_content
-
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        logging.error(f"Error during Markdown conversion: {e}")
-        logging.error(f"Stderr: {e.stderr if isinstance(e, subprocess.CalledProcessError) else 'N/A'}")
-        return "--- Conversion Failed ---"
-    finally:
-        # Clean up temporary files
-        if os.path.exists("temp_input.html"):
-            os.remove("temp_input.html")
-        if os.path.exists("temp_output.md"):
-            os.remove("temp_output.md")
-
-def get_processed_filings():
-    """Reads the set of processed filing accession numbers."""
-    if not PROCESSED_FILINGS_PATH.exists():
-        return set()
-    with open(PROCESSED_FILINGS_PATH, "r") as f:
-        return {line.strip() for line in f if line.strip()}
-
-
-def process_filing(filing, form_type, processed_filings):
-    """
-    Processes a single filing: filters, parses, and saves it.
-    """
-    accession_no = filing.get('accessionNo')
-    if not accession_no:
-        logging.warning("Filing has no accession number, cannot process.")
-        return
-
-    if accession_no in processed_filings:
-        logging.info(f"  -> Skipping already processed filing: {accession_no}")
-        return
-
-    ticker = filing.get('ticker')
-    if not ticker:
-        logging.warning(f"  -> Filing {accession_no} has no ticker, skipping.")
-        return
+            # Try to find Item 1.05 header and content
+            text = soup.get_text()
+            
+            # Pattern to find Item 1.05 section
+            patterns = [
+                r'Item\s+1\.05[^\n]*Material\s+Cybersecurity',
+                r'Item\s+1\.05',
+                r'ITEM\s+1\.05'
+            ]
+            
+            for pattern in patterns:
+                if re.search(pattern, text, re.IGNORECASE):
+                    # Found Item 1.05, try to extract section
+                    # Look for the section between Item 1.05 and next Item
+                    match = re.search(
+                        r'(Item\s+1\.05.*?)(?=Item\s+\d|ITEM\s+\d|Item\s+[2-9]|$)',
+                        text,
+                        re.DOTALL | re.IGNORECASE
+                    )
+                    if match:
+                        relevant_text.append(match.group(1))
+                    break
+            
+            if relevant_text:
+                return '\n'.join(relevant_text)
+            
+            # Fallback: if Item 1.05 mentioned, return full text
+            if 'item 1.05' in text.lower():
+                return text
+                
+            return None
         
-    logging.info(f"Processing {form_type} for {ticker} filed on {filing['filingDate']}...")
+        elif filing_type == '10-K':
+            # Look for Item 1C (Risk Management) or Item 407(j) (Governance)
+            text = soup.get_text()
+            
+            patterns = [
+                r'Item\s+1C.*?Cybersecurity',
+                r'Item\s+106',
+                r'Item\s+407.*?\(j\)',
+                r'Cybersecurity\s+Risk\s+Management',
+                r'ITEM\s+1C'
+            ]
+            
+            relevant_sections = []
+            
+            for pattern in patterns:
+                matches = re.finditer(pattern, text, re.IGNORECASE | re.DOTALL)
+                for match in matches:
+                    # Extract context around the match
+                    start = max(0, match.start() - 500)
+                    end = min(len(text), match.end() + 5000)
+                    section = text[start:end]
+                    relevant_sections.append(section)
+            
+            if relevant_sections:
+                return '\n\n---\n\n'.join(relevant_sections)
+            
+            # Fallback: search for cybersecurity keyword
+            if 'cybersecurity' in text.lower():
+                # Extract paragraphs containing cybersecurity
+                cyber_paras = []
+                paragraphs = text.split('\n\n')
+                for para in paragraphs:
+                    if 'cybersecurity' in para.lower():
+                        cyber_paras.append(para)
+                
+                if cyber_paras:
+                    return '\n\n'.join(cyber_paras[:10])  # Limit to first 10 paragraphs
+            
+            return None
+        
+        return None
     
-    # datamule provides the filing in HTML format
-    html_content = filing.get('content')
-    if not html_content:
-        logging.warning("  -> No content found, skipping.")
-        return
-
-    soup = BeautifulSoup(html_content, "lxml")
+    def create_frontmatter(self, filing_data, item_type):
+        """Generate YAML frontmatter"""
+        frontmatter = {
+            'ticker': filing_data.get('ticker', 'UNKNOWN'),
+            'company_name': filing_data.get('company_name', 'Unknown Company'),
+            'cik': filing_data.get('cik', 'Unknown'),
+            'filing_type': filing_data.get('form', 'Unknown'),
+            'filing_date': filing_data.get('filing_date', 'Unknown'),
+            'item_type': item_type,
+            'sec_link': filing_data.get('filing_url', ''),
+            'accession_number': filing_data.get('accession_number', 'Unknown')
+        }
+        
+        return f"---\n{yaml.dump(frontmatter, default_flow_style=False)}---\n\n"
     
-    relevant_html, item_type = find_relevant_section(soup, form_type)
+    def create_markdown_document(self, filing_data, markdown_content, filing_type):
+        """Create final formatted markdown document"""
+        company_name = filing_data.get('company_name', 'Unknown Company')
+        filing_date = filing_data.get('filing_date', 'Unknown')
+        ticker = filing_data.get('ticker', 'UNKNOWN')
+        cik = filing_data.get('cik', 'Unknown')
+        accession = filing_data.get('accession_number', 'Unknown')
+        filing_url = filing_data.get('filing_url', '#')
+        
+        if filing_type == '8-K':
+            item_type = '1.05'
+            doc = f"""# {company_name} Cybersecurity Incident
+
+**Last updated:** {datetime.now().strftime('%Y-%m-%d')}
+
+{company_name} disclosed a material cybersecurity incident in an SEC 8-K filing on {filing_date}.
+
+## Filing Details
+
+- **Filing Type:** 8-K (Item 1.05)
+- **Filing Date:** {filing_date}
+- **Accession Number:** {accession}
+- **SEC Link:** [{filing_url}]({filing_url})
+
+## Incident Disclosure
+
+{markdown_content}
+
+## Company Information
+
+| Field | Value |
+|-------|-------|
+| Company Name | {company_name} |
+| CIK | {cik} |
+| Ticker | {ticker} |
+
+---
+
+*This document was automatically generated from SEC EDGAR filings.*
+"""
+        else:  # 10-K
+            item_type = '1C/106'
+            doc = f"""# {company_name} Cybersecurity Risk Management (10-K)
+
+**Last updated:** {datetime.now().strftime('%Y-%m-%d')}
+
+{company_name} reported their cybersecurity risk management and governance processes in a 10-K filing on {filing_date}.
+
+## Filing Details
+
+- **Filing Type:** 10-K
+- **Filing Date:** {filing_date}
+- **Accession Number:** {accession}
+- **SEC Link:** [{filing_url}]({filing_url})
+
+## Cybersecurity Risk Management & Governance
+
+{markdown_content}
+
+## Company Information
+
+| Field | Value |
+|-------|-------|
+| Company Name | {company_name} |
+| CIK | {cik} |
+| Ticker | {ticker} |
+
+---
+
+*This document was automatically generated from SEC EDGAR filings.*
+"""
+        
+        return doc, item_type
     
-    if not relevant_html:
-        logging.info(f"  -> No relevant sections found in {form_type} for {ticker}. Discarding.")
-        return
-
-    logging.info(f"  -> Found relevant section (Item {item_type}). Converting to Markdown.")
-    markdown_content = convert_html_to_markdown(relevant_html)
-
-    # Prepare YAML frontmatter
-    filing_date = pd.to_datetime(filing['filingDate']).strftime('%Y-%m-%d')
-    year = pd.to_datetime(filing['filingDate']).year
-    quarter = pd.to_datetime(filing['filingDate']).quarter
-
-    metadata = {
-        'ticker': ticker,
-        'filing_type': form_type,
-        'filing_date': filing_date,
-        'item_type': item_type,
-        'sec_link': filing.get('linkToFilingDetails', 'N/A'),
-        'accession_no': accession_no
-    }
-    yaml_frontmatter = yaml.dump(metadata, sort_keys=False)
-
-    # Construct file content and path
-    output_content = f"---\n{yaml_frontmatter}---\n\n{markdown_content}"
-    
-    filename = f"{metadata['ticker']}_{metadata['filing_type']}_{metadata['filing_date']}_{accession_no}.md"
-    output_dir = DATA_PATH / str(year) / f"Q{quarter}"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / filename
-
-    # Save the file
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(output_content)
-    logging.info(f"  -> Successfully saved to {output_path}")
-
-    # Add to processed list
-    with open(PROCESSED_FILINGS_PATH, "a") as f:
-        f.write(f"{accession_no}\n")
-    processed_filings.add(accession_no)
-
-
-def get_recent_filings_by_date(portfolio, form_type, start_date, end_date, retries=3, backoff_factor=2):
-    """
-    Fetches all filings of a specific form type within a date range.
-    """
-    for attempt in range(retries):
+    def process_filing(self, filing_data):
+        """Process a single filing"""
         try:
-            logging.info(f"Fetching all {form_type} filings from {start_date} to {end_date} (Attempt {attempt + 1}/{retries})...")
-            # The portfolio name is just a local identifier, not used for filtering here
-            filings = portfolio.download_submissions(
-                submission_type=form_type,
-                filing_date=(start_date, end_date),
-                provider='datamule-sgml' # Use the fast provider
+            ticker = filing_data.get('ticker', 'UNKNOWN')
+            form = filing_data.get('form', 'Unknown')
+            filing_date = filing_data.get('filing_date', 'Unknown')
+            
+            print(f"Processing {ticker} {form} from {filing_date}...")
+            
+            # Get the HTML content
+            html_content = filing_data.get('html_content')
+            if not html_content:
+                print(f"  ⚠️  No HTML content available for {ticker} {form}")
+                self.stats['skipped'] += 1
+                return False
+            
+            # Extract relevant section
+            relevant_section = self.extract_relevant_section(html_content, form)
+            if not relevant_section:
+                print(f"  ⚠️  No cybersecurity content found in {ticker} {form}")
+                self.stats['skipped'] += 1
+                return False
+            
+            # Convert to markdown
+            try:
+                md_result = self.md_converter.convert(relevant_section)
+                markdown_content = md_result.text_content if hasattr(md_result, 'text_content') else str(md_result)
+            except Exception as e:
+                print(f"  ❌ Markdown conversion failed: {e}")
+                # Fallback to plain text
+                markdown_content = relevant_section
+            
+            # Create document
+            final_doc, item_type = self.create_markdown_document(
+                filing_data, 
+                markdown_content, 
+                form
             )
-            return filings
+            
+            # Add frontmatter
+            frontmatter = self.create_frontmatter(filing_data, item_type)
+            final_content = frontmatter + final_doc
+            
+            # Save to file
+            output_path = self.get_output_path(ticker, form, filing_date)
+            
+            # Check if file already exists
+            if output_path.exists():
+                print(f"  ℹ️  File already exists: {output_path}")
+                self.stats['skipped'] += 1
+                return False
+            
+            output_path.write_text(final_content, encoding='utf-8')
+            print(f"  ✅ Saved: {output_path}")
+            self.stats['saved'] += 1
+            return True
+            
         except Exception as e:
-            logging.warning(f"  -> Attempt {attempt + 1} failed: {e}")
-            if attempt < retries - 1:
-                sleep_time = backoff_factor * (2 ** attempt)
-                logging.info(f"  -> Retrying in {sleep_time} seconds...")
-                time.sleep(sleep_time)
-            else:
-                logging.error(f"Failed to fetch {form_type} filings after {retries} attempts.")
-                return None
+            print(f"  ❌ Error processing filing: {e}")
+            self.stats['errors'] += 1
+            return False
+    
+    def fetch_recent_filings(self, days_back=1):
+        """Fetch recent filings from the past N days"""
+        print(f"\n🔍 Fetching filings from the past {days_back} day(s)...")
+        
+        start_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        
+        print(f"Date range: {start_date} to {end_date}")
+        
+        all_filings = []
+        
+        # Fetch 8-K filings (Item 1.05)
+        print("\n📄 Fetching 8-K filings...")
+        try:
+            filings_8k = self.mule.search_filings(
+                form_types=['8-K'],
+                start_date=start_date,
+                end_date=end_date,
+                fetch_content=True
+            )
+            
+            # Filter for Item 1.05
+            for filing in filings_8k:
+                html = filing.get('html_content', '')
+                if html and 'item 1.05' in html.lower():
+                    all_filings.append(filing)
+                    print(f"  Found: {filing.get('ticker', 'N/A')} - {filing.get('filing_date', 'N/A')}")
+        except Exception as e:
+            print(f"  ⚠️  Error fetching 8-K filings: {e}")
+        
+        # Fetch 10-K filings
+        print("\n📄 Fetching 10-K filings...")
+        try:
+            filings_10k = self.mule.search_filings(
+                form_types=['10-K'],
+                start_date=start_date,
+                end_date=end_date,
+                fetch_content=True
+            )
+            
+            # Filter for cybersecurity content
+            for filing in filings_10k:
+                html = filing.get('html_content', '')
+                if html:
+                    html_lower = html.lower()
+                    if 'item 1c' in html_lower or 'item 106' in html_lower or \
+                       'cybersecurity risk' in html_lower or 'item 407' in html_lower:
+                        all_filings.append(filing)
+                        print(f"  Found: {filing.get('ticker', 'N/A')} - {filing.get('filing_date', 'N/A')}")
+        except Exception as e:
+            print(f"  ⚠️  Error fetching 10-K filings: {e}")
+        
+        return all_filings
+    
+    def run(self, days_back=1):
+        """Main execution flow"""
+        print("=" * 60)
+        print("SEC CYBERSECURITY FILINGS INGESTION")
+        print("=" * 60)
+        
+        # Fetch recent filings
+        filings = self.fetch_recent_filings(days_back)
+        print(f"\n📊 Total filings to process: {len(filings)}")
+        
+        if not filings:
+            print("\n✅ No new cybersecurity filings found.")
+            return
+        
+        # Process each filing
+        print("\n⚙️  Processing filings...\n")
+        for filing in filings:
+            self.stats['processed'] += 1
+            self.process_filing(filing)
+        
+        # Print summary
+        print("\n" + "=" * 60)
+        print("INGESTION SUMMARY")
+        print("=" * 60)
+        print(f"Processed:  {self.stats['processed']}")
+        print(f"Saved:      {self.stats['saved']}")
+        print(f"Skipped:    {self.stats['skipped']}")
+        print(f"Errors:     {self.stats['errors']}")
+        print("=" * 60)
 
 
 def main():
-    """
-    Main execution function.
-    """
-    logging.info("--- Starting SEC Cybersecurity Filing Ingestion ---")
-    # The name for the portfolio is a local identifier, can be anything.
-    portfolio = Portfolio("cybersecurity_filings")
-    portfolio.set_api_key(API_KEY)
-    processed_filings = get_processed_filings()
-
-    # Define the date range for the query (last 2 days to be safe)
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=2)
-    start_date_str = start_date.strftime('%Y-%m-%d')
-    end_date_str = end_date.strftime('%Y-%m-%d')
-
-    form_types_to_fetch = ["8-K", "10-K"]
-
-    for form_type in form_types_to_fetch:
-        logging.info(f"\nFetching recent {form_type} filings...")
+    """Entry point"""
+    try:
+        ingest = SECCybersecurityIngest()
+        ingest.run(days_back=1)
         
-        recent_filings = get_recent_filings_by_date(portfolio, form_type, start_date_str, end_date_str)
-
-        if recent_filings:
-            logging.info(f"Found {len(recent_filings)} recent {form_type} filings.")
-            for filing in recent_filings:
-                process_filing(filing, form_type, processed_filings)
-        else:
-            logging.info(f"  -> No recent {form_type} filings found for the period.")
-
-    logging.info("\n--- Ingestion Process Complete ---")
+        # Exit with error code if there were errors
+        if ingest.stats['errors'] > 0:
+            sys.exit(1)
+            
+    except Exception as e:
+        print(f"\n❌ Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
