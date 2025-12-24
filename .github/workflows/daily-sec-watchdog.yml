@@ -35,18 +35,18 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxml2-dev libxslt-dev python3-lxml
+          sudo apt-get install -y libxml2-dev libxslt-dev
       
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r .github/scripts/requirements.txt
       
       - name: Run SEC ingestion script
         env:
           DATA_MULE_API_KEY: ${{ secrets.DATA_MULE_API_KEY }}
         run: |
-          python .github/scripts/ingest_sec.py
+          python .github/scripts/ingest_sec.py > ingestion.log 2>&1
       
       - name: Check for changes
         id: check_changes
@@ -76,6 +76,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ingestion-log-${{ github.run_number }}
-          path: |
-            ./*.log
+          path: ingestion.log
           retention-days: 30
