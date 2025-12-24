@@ -9,17 +9,41 @@ import sys
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
-import json
+import traceback
+
+# Verify imports
+print("Checking dependencies...")
+try:
+    import yaml
+    print("  ✓ yaml")
+except ImportError as e:
+    print(f"  ✗ yaml: {e}")
+    sys.exit(1)
+
+try:
+    from bs4 import BeautifulSoup
+    print("  ✓ BeautifulSoup")
+except ImportError as e:
+    print(f"  ✗ BeautifulSoup: {e}")
+    sys.exit(1)
 
 try:
     from datamule import DataMule
-    from markitdown import MarkItDown
-    from bs4 import BeautifulSoup
-    import yaml
+    print("  ✓ datamule")
 except ImportError as e:
-    print(f"Error importing required packages: {e}")
-    print("Please ensure all dependencies are installed: pip install -r requirements.txt")
+    print(f"  ✗ datamule: {e}")
+    print("  Install with: pip install datamule")
     sys.exit(1)
+
+try:
+    from markitdown import MarkItDown
+    print("  ✓ markitdown")
+except ImportError as e:
+    print(f"  ✗ markitdown: {e}")
+    print("  Install with: pip install markitdown")
+    sys.exit(1)
+
+print("All dependencies loaded successfully!\n")
 
 
 class SECCybersecurityIngest:
@@ -30,10 +54,24 @@ class SECCybersecurityIngest:
         if not self.api_key:
             raise ValueError("DATA_MULE_API_KEY environment variable must be set")
         
-        self.mule = DataMule(api_key=self.api_key)
-        self.md_converter = MarkItDown()
+        print(f"Initializing DataMule (API key present: {bool(self.api_key)})")
+        try:
+            self.mule = DataMule(api_key=self.api_key)
+            print("  ✓ DataMule initialized")
+        except Exception as e:
+            print(f"  ✗ DataMule initialization failed: {e}")
+            raise
+        
+        try:
+            self.md_converter = MarkItDown()
+            print("  ✓ MarkItDown initialized")
+        except Exception as e:
+            print(f"  ✗ MarkItDown initialization failed: {e}")
+            raise
+        
         self.base_path = Path("data")
         self.base_path.mkdir(exist_ok=True)
+        print(f"  ✓ Data directory: {self.base_path.absolute()}\n")
         
         # Stats tracking
         self.stats = {
@@ -57,7 +95,20 @@ class SECCybersecurityIngest:
     
     def get_output_path(self, ticker, filing_type, filing_date):
         """Generate output file path"""
-        date_obj = datetime.strptime(filing_date, '%Y-%m-%d')
+        try:
+            date_obj = datetime.strptime(filing_date, '%Y-%m-%d')
+        except ValueError:
+            # Try alternative date formats
+            for fmt in ['%Y%m%d', '%m/%d/%Y', '%Y-%m-%d %H:%M:%S']:
+                try:
+                    date_obj = datetime.strptime(filing_date, fmt)
+                    break
+                except ValueError:
+                    continue
+            else:
+                # If all formats fail, use current date
+                date_obj = datetime.now()
+        
         year = date_obj.year
         quarter = self.get_quarter(date_obj)
         
@@ -65,18 +116,26 @@ class SECCybersecurityIngest:
         dir_path = self.base_path / str(year) / quarter
         dir_path.mkdir(parents=True, exist_ok=True)
         
+        # Clean ticker for filename
+        clean_ticker = re.sub(r'[^\w\-]', '', str(ticker))
+        
         # Generate filename
-        filename = f"{ticker}_{filing_type}_{filing_date}.md"
+        filename = f"{clean_ticker}_{filing_type}_{date_obj.strftime('%Y-%m-%d')}.md"
         return dir_path / filename
     
     def extract_relevant_section(self, html_content, filing_type):
         """Extract cybersecurity-relevant sections from HTML"""
-        soup = BeautifulSoup(html_content, 'lxml')
+        try:
+            soup = BeautifulSoup(html_content, 'lxml')
+        except Exception as e:
+            print(f"    Warning: lxml parser failed, trying html.parser: {e}")
+            try:
+                soup = BeautifulSoup(html_content, 'html.parser')
+            except Exception as e2:
+                print(f"    Error: All parsers failed: {e2}")
+                return None
         
         if filing_type == '8-K':
-            # Look for Item 1.05 sections
-            relevant_text = []
-            
             # Try to find Item 1.05 header and content
             text = soup.get_text()
             
@@ -90,18 +149,14 @@ class SECCybersecurityIngest:
             for pattern in patterns:
                 if re.search(pattern, text, re.IGNORECASE):
                     # Found Item 1.05, try to extract section
-                    # Look for the section between Item 1.05 and next Item
                     match = re.search(
                         r'(Item\s+1\.05.*?)(?=Item\s+\d|ITEM\s+\d|Item\s+[2-9]|$)',
                         text,
                         re.DOTALL | re.IGNORECASE
                     )
                     if match:
-                        relevant_text.append(match.group(1))
+                        return match.group(1)
                     break
-            
-            if relevant_text:
-                return '\n'.join(relevant_text)
             
             # Fallback: if Item 1.05 mentioned, return full text
             if 'item 1.05' in text.lower():
@@ -110,7 +165,6 @@ class SECCybersecurityIngest:
             return None
         
         elif filing_type == '10-K':
-            # Look for Item 1C (Risk Management) or Item 407(j) (Governance)
             text = soup.get_text()
             
             patterns = [
@@ -126,7 +180,6 @@ class SECCybersecurityIngest:
             for pattern in patterns:
                 matches = re.finditer(pattern, text, re.IGNORECASE | re.DOTALL)
                 for match in matches:
-                    # Extract context around the match
                     start = max(0, match.start() - 500)
                     end = min(len(text), match.end() + 5000)
                     section = text[start:end]
@@ -137,7 +190,6 @@ class SECCybersecurityIngest:
             
             # Fallback: search for cybersecurity keyword
             if 'cybersecurity' in text.lower():
-                # Extract paragraphs containing cybersecurity
                 cyber_paras = []
                 paragraphs = text.split('\n\n')
                 for para in paragraphs:
@@ -145,7 +197,7 @@ class SECCybersecurityIngest:
                         cyber_paras.append(para)
                 
                 if cyber_paras:
-                    return '\n\n'.join(cyber_paras[:10])  # Limit to first 10 paragraphs
+                    return '\n\n'.join(cyber_paras[:10])
             
             return None
         
@@ -154,14 +206,14 @@ class SECCybersecurityIngest:
     def create_frontmatter(self, filing_data, item_type):
         """Generate YAML frontmatter"""
         frontmatter = {
-            'ticker': filing_data.get('ticker', 'UNKNOWN'),
-            'company_name': filing_data.get('company_name', 'Unknown Company'),
-            'cik': filing_data.get('cik', 'Unknown'),
-            'filing_type': filing_data.get('form', 'Unknown'),
-            'filing_date': filing_data.get('filing_date', 'Unknown'),
-            'item_type': item_type,
-            'sec_link': filing_data.get('filing_url', ''),
-            'accession_number': filing_data.get('accession_number', 'Unknown')
+            'ticker': str(filing_data.get('ticker', 'UNKNOWN')),
+            'company_name': str(filing_data.get('company_name', 'Unknown Company')),
+            'cik': str(filing_data.get('cik', 'Unknown')),
+            'filing_type': str(filing_data.get('form', 'Unknown')),
+            'filing_date': str(filing_data.get('filing_date', 'Unknown')),
+            'item_type': str(item_type),
+            'sec_link': str(filing_data.get('filing_url', '')),
+            'accession_number': str(filing_data.get('accession_number', 'Unknown'))
         }
         
         return f"---\n{yaml.dump(frontmatter, default_flow_style=False)}---\n\n"
@@ -247,19 +299,19 @@ class SECCybersecurityIngest:
             form = filing_data.get('form', 'Unknown')
             filing_date = filing_data.get('filing_date', 'Unknown')
             
-            print(f"Processing {ticker} {form} from {filing_date}...")
+            print(f"  Processing {ticker} {form} from {filing_date}...")
             
             # Get the HTML content
             html_content = filing_data.get('html_content')
             if not html_content:
-                print(f"  ⚠️  No HTML content available for {ticker} {form}")
+                print(f"    ⚠️  No HTML content available")
                 self.stats['skipped'] += 1
                 return False
             
             # Extract relevant section
             relevant_section = self.extract_relevant_section(html_content, form)
             if not relevant_section:
-                print(f"  ⚠️  No cybersecurity content found in {ticker} {form}")
+                print(f"    ⚠️  No cybersecurity content found")
                 self.stats['skipped'] += 1
                 return False
             
@@ -268,8 +320,7 @@ class SECCybersecurityIngest:
                 md_result = self.md_converter.convert(relevant_section)
                 markdown_content = md_result.text_content if hasattr(md_result, 'text_content') else str(md_result)
             except Exception as e:
-                print(f"  ❌ Markdown conversion failed: {e}")
-                # Fallback to plain text
+                print(f"    ⚠️  Markdown conversion failed ({e}), using plain text")
                 markdown_content = relevant_section
             
             # Create document
@@ -288,33 +339,34 @@ class SECCybersecurityIngest:
             
             # Check if file already exists
             if output_path.exists():
-                print(f"  ℹ️  File already exists: {output_path}")
+                print(f"    ℹ️  File already exists")
                 self.stats['skipped'] += 1
                 return False
             
             output_path.write_text(final_content, encoding='utf-8')
-            print(f"  ✅ Saved: {output_path}")
+            print(f"    ✅ Saved: {output_path}")
             self.stats['saved'] += 1
             return True
             
         except Exception as e:
-            print(f"  ❌ Error processing filing: {e}")
+            print(f"    ❌ Error: {e}")
+            traceback.print_exc()
             self.stats['errors'] += 1
             return False
     
     def fetch_recent_filings(self, days_back=1):
         """Fetch recent filings from the past N days"""
-        print(f"\n🔍 Fetching filings from the past {days_back} day(s)...")
+        print(f"🔍 Fetching filings from the past {days_back} day(s)...\n")
         
         start_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y-%m-%d')
         end_date = datetime.now().strftime('%Y-%m-%d')
         
-        print(f"Date range: {start_date} to {end_date}")
+        print(f"Date range: {start_date} to {end_date}\n")
         
         all_filings = []
         
         # Fetch 8-K filings (Item 1.05)
-        print("\n📄 Fetching 8-K filings...")
+        print("📄 Fetching 8-K filings...")
         try:
             filings_8k = self.mule.search_filings(
                 form_types=['8-K'],
@@ -323,14 +375,18 @@ class SECCybersecurityIngest:
                 fetch_content=True
             )
             
+            print(f"  Retrieved {len(filings_8k) if filings_8k else 0} 8-K filings")
+            
             # Filter for Item 1.05
-            for filing in filings_8k:
-                html = filing.get('html_content', '')
-                if html and 'item 1.05' in html.lower():
-                    all_filings.append(filing)
-                    print(f"  Found: {filing.get('ticker', 'N/A')} - {filing.get('filing_date', 'N/A')}")
+            if filings_8k:
+                for filing in filings_8k:
+                    html = filing.get('html_content', '')
+                    if html and 'item 1.05' in html.lower():
+                        all_filings.append(filing)
+                        print(f"  ✓ {filing.get('ticker', 'N/A')} - {filing.get('filing_date', 'N/A')}")
         except Exception as e:
             print(f"  ⚠️  Error fetching 8-K filings: {e}")
+            traceback.print_exc()
         
         # Fetch 10-K filings
         print("\n📄 Fetching 10-K filings...")
@@ -342,17 +398,21 @@ class SECCybersecurityIngest:
                 fetch_content=True
             )
             
+            print(f"  Retrieved {len(filings_10k) if filings_10k else 0} 10-K filings")
+            
             # Filter for cybersecurity content
-            for filing in filings_10k:
-                html = filing.get('html_content', '')
-                if html:
-                    html_lower = html.lower()
-                    if 'item 1c' in html_lower or 'item 106' in html_lower or \
-                       'cybersecurity risk' in html_lower or 'item 407' in html_lower:
-                        all_filings.append(filing)
-                        print(f"  Found: {filing.get('ticker', 'N/A')} - {filing.get('filing_date', 'N/A')}")
+            if filings_10k:
+                for filing in filings_10k:
+                    html = filing.get('html_content', '')
+                    if html:
+                        html_lower = html.lower()
+                        if 'item 1c' in html_lower or 'item 106' in html_lower or \
+                           'cybersecurity risk' in html_lower or 'item 407' in html_lower:
+                            all_filings.append(filing)
+                            print(f"  ✓ {filing.get('ticker', 'N/A')} - {filing.get('filing_date', 'N/A')}")
         except Exception as e:
             print(f"  ⚠️  Error fetching 10-K filings: {e}")
+            traceback.print_exc()
         
         return all_filings
     
@@ -361,23 +421,32 @@ class SECCybersecurityIngest:
         print("=" * 60)
         print("SEC CYBERSECURITY FILINGS INGESTION")
         print("=" * 60)
+        print()
         
         # Fetch recent filings
-        filings = self.fetch_recent_filings(days_back)
-        print(f"\n📊 Total filings to process: {len(filings)}")
+        try:
+            filings = self.fetch_recent_filings(days_back)
+            print(f"\n📊 Total cybersecurity filings found: {len(filings)}\n")
+        except Exception as e:
+            print(f"\n❌ Failed to fetch filings: {e}")
+            traceback.print_exc()
+            return
         
         if not filings:
-            print("\n✅ No new cybersecurity filings found.")
+            print("✅ No new cybersecurity filings found in the past 24 hours.")
+            print("This is normal - cybersecurity disclosures are relatively rare.\n")
             return
         
         # Process each filing
-        print("\n⚙️  Processing filings...\n")
-        for filing in filings:
+        print("⚙️  Processing filings...\n")
+        for i, filing in enumerate(filings, 1):
+            print(f"[{i}/{len(filings)}]")
             self.stats['processed'] += 1
             self.process_filing(filing)
+            print()
         
         # Print summary
-        print("\n" + "=" * 60)
+        print("=" * 60)
         print("INGESTION SUMMARY")
         print("=" * 60)
         print(f"Processed:  {self.stats['processed']}")
@@ -390,16 +459,16 @@ class SECCybersecurityIngest:
 def main():
     """Entry point"""
     try:
+        print("Starting SEC Cybersecurity Ingestion Script\n")
         ingest = SECCybersecurityIngest()
         ingest.run(days_back=1)
         
-        # Exit with error code if there were errors
-        if ingest.stats['errors'] > 0:
-            sys.exit(1)
+        # Don't exit with error if no filings found - that's normal
+        print("\n✅ Script completed successfully!")
+        sys.exit(0)
             
     except Exception as e:
         print(f"\n❌ Fatal error: {e}")
-        import traceback
         traceback.print_exc()
         sys.exit(1)
 

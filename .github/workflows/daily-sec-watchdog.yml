@@ -46,7 +46,7 @@ jobs:
         env:
           DATA_MULE_API_KEY: ${{ secrets.DATA_MULE_API_KEY }}
         run: |
-          python .github/scripts/ingest_sec.py > ingestion.log 2>&1
+          python .github/scripts/ingest_sec.py ${{ github.event.inputs.days_back }} > ingestion.log 2>&1
       
       - name: Check for changes
         id: check_changes
