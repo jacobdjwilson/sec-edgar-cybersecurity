@@ -9,7 +9,7 @@ import pandas as pd
 from pathlib import Path
 from bs4 import BeautifulSoup
 from datamule import Portfolio
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- Configuration ---
 # Get API key from environment variable
@@ -21,7 +21,6 @@ if not API_KEY:
 # The script is in .github/scripts, so we need to go up two levels for the repo root
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_PATH = REPO_ROOT / "data"
-WATCHLIST_PATH = REPO_ROOT / ".github" / "scripts" / "watchlist.txt"
 
 PROCESSED_FILINGS_PATH = REPO_ROOT / ".github" / "processed_filings.txt"
 
@@ -40,18 +39,6 @@ logging.basicConfig(
 
 # Keywords for filtering 10-K filings (case-insensitive)
 TEN_K_KEYWORDS = ["item 1c", "cybersecurity", "item 407(j)"]
-
-
-def get_watchlist():
-    """Reads tickers from the watchlist file."""
-    if not WATCHLIST_PATH.exists():
-        logging.error(f"Watchlist not found at: {WATCHLIST_PATH}")
-        raise FileNotFoundError(f"Watchlist not found at: {WATCHLIST_PATH}")
-    with open(WATCHLIST_PATH, "r") as f:
-        # Read, strip whitespace, and filter out empty lines
-        tickers = [line.strip() for line in f if line.strip()]
-    logging.info(f"Loaded {len(tickers)} tickers from watchlist.")
-    return tickers
 
 
 def find_relevant_section(soup, form_type):
@@ -170,7 +157,12 @@ def process_filing(filing, form_type, processed_filings):
         logging.info(f"  -> Skipping already processed filing: {accession_no}")
         return
 
-    logging.info(f"Processing {form_type} for {filing['ticker']} filed on {filing['filingDate']}...")
+    ticker = filing.get('ticker')
+    if not ticker:
+        logging.warning(f"  -> Filing {accession_no} has no ticker, skipping.")
+        return
+        
+    logging.info(f"Processing {form_type} for {ticker} filed on {filing['filingDate']}...")
     
     # datamule provides the filing in HTML format
     html_content = filing.get('content')
@@ -183,7 +175,7 @@ def process_filing(filing, form_type, processed_filings):
     relevant_html, item_type = find_relevant_section(soup, form_type)
     
     if not relevant_html:
-        logging.info(f"  -> No relevant sections found in {form_type} for {filing['ticker']}. Discarding.")
+        logging.info(f"  -> No relevant sections found in {form_type} for {ticker}. Discarding.")
         return
 
     logging.info(f"  -> Found relevant section (Item {item_type}). Converting to Markdown.")
@@ -195,7 +187,7 @@ def process_filing(filing, form_type, processed_filings):
     quarter = pd.to_datetime(filing['filingDate']).quarter
 
     metadata = {
-        'ticker': filing['ticker'],
+        'ticker': ticker,
         'filing_type': form_type,
         'filing_date': filing_date,
         'item_type': item_type,
@@ -223,14 +215,19 @@ def process_filing(filing, form_type, processed_filings):
     processed_filings.add(accession_no)
 
 
-def get_filings_with_retry(portfolio, ticker, form_type, retries=3, backoff_factor=2):
+def get_recent_filings_by_date(portfolio, form_type, start_date, end_date, retries=3, backoff_factor=2):
     """
-    Fetches filings with a retry mechanism for handling transient errors.
+    Fetches all filings of a specific form type within a date range.
     """
     for attempt in range(retries):
         try:
-            logging.info(f"Fetching {form_type} for {ticker} (Attempt {attempt + 1}/{retries})...")
-            filings = portfolio.get_filings(ticker=ticker, form_type=form_type, limit=5 if form_type == "8-K" else 2)
+            logging.info(f"Fetching all {form_type} filings from {start_date} to {end_date} (Attempt {attempt + 1}/{retries})...")
+            # The portfolio name is just a local identifier, not used for filtering here
+            filings = portfolio.download_submissions(
+                submission_type=form_type,
+                filing_date=(start_date, end_date),
+                provider='datamule-sgml' # Use the fast provider
+            )
             return filings
         except Exception as e:
             logging.warning(f"  -> Attempt {attempt + 1} failed: {e}")
@@ -239,7 +236,7 @@ def get_filings_with_retry(portfolio, ticker, form_type, retries=3, backoff_fact
                 logging.info(f"  -> Retrying in {sleep_time} seconds...")
                 time.sleep(sleep_time)
             else:
-                logging.error(f"Failed to fetch filings for {ticker} after {retries} attempts.")
+                logging.error(f"Failed to fetch {form_type} filings after {retries} attempts.")
                 return None
 
 
@@ -248,33 +245,32 @@ def main():
     Main execution function.
     """
     logging.info("--- Starting SEC Cybersecurity Filing Ingestion ---")
-    portfolio = Portfolio(API_KEY)
-    tickers = get_watchlist()
+    # The name for the portfolio is a local identifier, can be anything.
+    portfolio = Portfolio("cybersecurity_filings", api_key=API_KEY)
     processed_filings = get_processed_filings()
 
-    for ticker in tickers:
-        logging.info(f"\nFetching filings for ticker: {ticker}")
-        try:
-            # Fetch recent 8-K filings
-            recent_8ks = get_filings_with_retry(portfolio, ticker, "8-K")
-            if recent_8ks:
-                for filing in recent_8ks:
-                    process_filing(filing, "8-K", processed_filings)
-            else:
-                logging.info(f"  -> No recent 8-K filings found for {ticker}.")
+    # Define the date range for the query (last 2 days to be safe)
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=2)
+    start_date_str = start_date.strftime('%Y-%m-%d')
+    end_date_str = end_date.strftime('%Y-%m-%d')
 
-            # Fetch recent 10-K filings
-            recent_10ks = get_filings_with_retry(portfolio, ticker, "10-K")
-            if recent_10ks:
-                for filing in recent_10ks:
-                    process_filing(filing, "10-K", processed_filings)
-            else:
-                logging.info(f"  -> No recent 10-K filings found for {ticker}.")
+    form_types_to_fetch = ["8-K", "10-K"]
 
-        except Exception as e:
-            logging.error(f"An error occurred while processing ticker {ticker}: {e}")
+    for form_type in form_types_to_fetch:
+        logging.info(f"\nFetching recent {form_type} filings...")
+        
+        recent_filings = get_recent_filings_by_date(portfolio, form_type, start_date_str, end_date_str)
+
+        if recent_filings:
+            logging.info(f"Found {len(recent_filings)} recent {form_type} filings.")
+            for filing in recent_filings:
+                process_filing(filing, form_type, processed_filings)
+        else:
+            logging.info(f"  -> No recent {form_type} filings found for the period.")
 
     logging.info("\n--- Ingestion Process Complete ---")
+
 
 if __name__ == "__main__":
     main()
