@@ -1,0 +1,61 @@
+
+name: Daily SEC Watchdog
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Runs at 11:00 UTC, which is 6:00 AM ET (standard time)
+    - cron: '0 11 * * *'
+
+permissions:
+  # Required to commit new data files back to the repository
+  contents: write
+
+jobs:
+  ingest-filings:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install markitdown system dependencies
+        # The prompt mentions markitdown may require browsers via playwright.
+        # This ensures they are available in the environment.
+        run: npx playwright install --with-deps
+
+      - name: Run SEC ingestion script
+        env:
+          # The API key is passed as a secret to the script
+          DATA_MULE_API_KEY: ${{ secrets.DATA_MULE_API_KEY }}
+        run: python .github/scripts/ingest_sec.py
+
+      - name: Commit and push new data
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          # Check if there are any changes to commit
+          if [ -n "$(git status --porcelain data/)" ]; then
+            git add data/
+            git commit -m "New SEC Cybersecurity filings processed $(date +'%Y-%m-%d')"
+            git push
+            echo "New data committed and pushed."
+          else
+            echo "No new data to commit."
+          fi

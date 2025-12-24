@@ -1,0 +1,1 @@
+This directory contains the SEC cybersecurity disclosure data, organized by year and quarter.

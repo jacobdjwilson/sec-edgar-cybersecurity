@@ -1,0 +1,7 @@
+datamule
+markitdown
+beautifulsoup4
+pandas
+pyyaml
+lxml
+requests
