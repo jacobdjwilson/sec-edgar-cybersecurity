@@ -1,0 +1,44 @@
+name: Daily SEC Filing Ingestion
+
+on:
+  workflow_dispatch: # Allows manual triggering
+  schedule:
+    # Runs at 6:00 AM Eastern Time (ET), which is 11:00 UTC
+    # Note: This does not account for DST shifts. 11:00 UTC is 7 AM EDT / 6 AM EST.
+    - cron: '0 11 * * *'
+
+jobs:
+  ingest-filings:
+    runs-on: ubuntu-latest
+    permissions:
+      # Required for stefanzweifel/git-auto-commit-action to push changes
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11' # Specify a modern Python version
+          cache: 'pip' # Cache dependencies
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r .github/scripts/requirements.txt
+
+      - name: Run ingestion script
+        env:
+          DATA_MULE_API_KEY: ${{ secrets.DATA_MULE_API_KEY }}
+        run: python .github/scripts/ingest_filings.py
+
+      - name: Commit and push new filings
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Automated: Add new cybersecurity disclosures"
+          branch: main
+          file_pattern: content/filings/**/*.md # Only commit new markdown files
+          commit_user_name: "GitHub Actions"
+          commit_user_email: "actions@github.com"
+          commit_author: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
