@@ -3,3 +3,4 @@ markitdown
 python-dotenv
 pyyaml
 requests
+pandas

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 # Assuming markitdown and datamule are installed
 # You may need to install them: pip install markitdown datamule
 import markitdown
-from datamule import Edgar
+from datamule import Portfolio
 
 # Load environment variables for local development
 from dotenv import load_dotenv
@@ -15,6 +15,8 @@ load_dotenv()
 
 # --- Constants ---
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'content', 'filings')
+CACHE_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'temp_datamule_cache')
+
 # Regex to find Item 1.05 in 8-K filings. This looks for "Item 1.05" and captures content 
 # until the next "Item", "Signatures", or "Exhibit Index". It handles various whitespace and HTML tags.
 # It is designed to be non-greedy.
@@ -101,33 +103,40 @@ def main():
     """
     print("Starting SEC Edgar Cybersecurity Disclosure Ingestion...")
 
-    # 1. Initialize Edgar client from datamule
+    # 1. Initialize Portfolio client from datamule
     api_key = os.getenv("DATA_MULE_API_KEY")
     if not api_key:
         print("Error: DATA_MULE_API_KEY environment variable not set.")
         return
 
     try:
-        edgar = Edgar(api_key)
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        portfolio = Portfolio(CACHE_DIR)
+        portfolio.set_api_key(api_key)
     except Exception as e:
-        print(f"Failed to initialize Edgar client: {e}")
+        print(f"Failed to initialize Portfolio client: {e}")
         return
 
     # 2. Define date range (last 24 hours)
-    # Using timezone-aware datetime objects
     end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=1)
+    date_range_str = (start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
     
-    print(f"Fetching filings from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+    print(f"Fetching filings from {date_range_str[0]} to {date_range_str[1]}")
 
     # 3. Fetch recent 8-K and 10-K filings
     try:
-        # Note: datamule might return a list of dicts. Adjust as per actual package behavior.
-        recent_filings = edgar.get_filings(
-            start_date=start_date.strftime('%Y-%m-%d'),
-            end_date=end_date.strftime('%Y-%m-%d'),
-            form_types=['8-K', '10-K']
+        # We are assuming download_submissions will return a list of filing objects
+        # when no ticker or CIK is provided.
+        recent_filings = portfolio.download_submissions(
+            form_type=['8-K', '10-K'],
+            filing_date=date_range_str,
+            provider='datamule'
         )
+        if not recent_filings:
+            print("No new filings found for the specified date range.")
+            return
+            
         print(f"Found {len(recent_filings)} filings to evaluate.")
     except Exception as e:
         print(f"Failed to fetch filings from datamule: {e}")
@@ -136,11 +145,22 @@ def main():
     # 4. Process each filing
     for filing in recent_filings:
         try:
-            filing_type = filing.get('form_type')
-            filing_html = filing.get('document_html') # Assuming this is the key for the content
+            # Adjusting keys based on typical datamule structures
+            filing_type = filing.get('form') 
+            
+            # datamule might provide content directly or a path to the file
+            # Assuming we need to read the content from a file path provided
+            filing_path = filing.get('path_to_file')
+            filing_html = ""
+            if filing_path and os.path.exists(filing_path):
+                 with open(filing_path, 'r', encoding='utf-8') as f:
+                    filing_html = f.read()
+            else:
+                # Fallback if content is directly in the object
+                filing_html = filing.get('content')
 
             if not filing_html:
-                print(f"Skipping filing {filing.get('accession_number')} due to missing HTML content.")
+                print(f"Skipping filing {filing.get('accession_number')} due to missing content.")
                 continue
 
             metadata = {
@@ -148,7 +168,8 @@ def main():
                 'CIK': str(filing.get('cik')),
                 'Date': filing.get('filing_date'),
                 'Filing Type': filing_type,
-                'Source Link': filing.get('url')
+                # Assuming the URL is in 'link' or 'url'
+                'Source Link': filing.get('link', filing.get('url', 'N/A')) 
             }
 
             if filing_type == '8-K':
@@ -162,7 +183,6 @@ def main():
                 content_106 = process_filing_content(filing_html, REGEX_10K_ITEM_106)
                 if content_106:
                     print(f"Found Item 106 in 10-K for CIK {metadata['CIK']}.")
-                    # Modify metadata for specificity if needed
                     meta_106 = metadata.copy()
                     meta_106['Tracked Item'] = '106'
                     write_markdown_file(meta_106, content_106)
@@ -170,7 +190,6 @@ def main():
                 # Check for Item 407(j)
                 content_407 = process_filing_content(filing_html, REGEX_10K_ITEM_407J)
                 if content_407:
-                    # Further refinement to find "(j)" within the Item 407 content
                     if re.search(r'\(j\)', content_407, re.IGNORECASE):
                          print(f"Found Item 407(j) in 10-K for CIK {metadata['CIK']}.")
                          meta_407 = metadata.copy()
