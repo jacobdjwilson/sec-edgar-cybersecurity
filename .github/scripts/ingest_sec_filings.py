@@ -32,10 +32,10 @@ class SECFilingIngestor:
         self.provider = 'datamule' if self.api_key else 'sec'
         
         # Initialize downloader
+        self.downloader = Portfolio('sec-edgar-cybersecurity')
         if self.api_key:
-            self.downloader = Portfolio('sec-edgar-cybersecurity', provider='datamule', api_key=self.api_key)
+            self.downloader.set_api_key(self.api_key)
         else:
-            self.downloader = Portfolio('sec-edgar-cybersecurity', provider='sec')
             logger.warning("No API key provided. Using SEC provider with rate limits.")
         
         # Create directories
