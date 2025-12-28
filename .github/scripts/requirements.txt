@@ -1,2 +1,2 @@
-datamule
-markitdown
+datamule==3.0.4
+markitdown==0.1.4
