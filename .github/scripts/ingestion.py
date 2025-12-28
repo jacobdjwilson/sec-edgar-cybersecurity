@@ -3,62 +3,8 @@ import datetime
 import json
 import re
 
-# Assuming datamule and markitdown are installed
-# from datamule import Client # Placeholder for actual datamule import
-# from markitdown import Markitdown # Placeholder for actual markitdown import
-
-# Mock classes for datamule and markitdown for initial scaffolding
-class MockDatamuleClient:
-    def __init__(self):
-        print(f"Datamule client initialized in mock mode.")
-
-    def get_filings(self, start_date, end_date):
-        print(f"Fetching filings from {start_date} to {end_date}")
-        # Mock data for demonstration
-        mock_filings = [
-            {
-                "cik": "0000100000",
-                "ticker": "EXAMPLEA",
-                "filing_type": "8-K",
-                "filing_date": "2023-10-26",
-                "accession_number": "0000100000-23-000001",
-                "html_url": "https://www.sec.gov/Archives/edgar/data/100000/000010000023000001/examplea-20231025.htm",
-                "sections": {
-                    "1.05": "<p>This is a <strong>mock</strong> Item 1.05 disclosure about a material cybersecurity incident.</p><p>More details here.</p>"
-                }
-            },
-            {
-                "cik": "0000200000",
-                "ticker": "EXAMPLEB",
-                "filing_type": "10-K",
-                "filing_date": "2023-10-25",
-                "accession_number": "0000200000-23-000002",
-                "html_url": "https://www.sec.gov/Archives/edgar/data/200000/000020000023000002/exampleb-20230930.htm",
-                "sections": {
-                    "1A": "<p>Risk Factors content</p>",
-                    "106": "<p>This is a <strong>mock</strong> Item 106 disclosure about risk management and strategy.</p><p>Cybersecurity risks are managed effectively.</p>",
-                    "407j": "<p>This is a <strong>mock</strong> Item 407j disclosure about governance.</p><p>The board oversees cybersecurity risks.</p>"
-                }
-            },
-            {
-                "cik": "0000300000",
-                "ticker": "EXAMPLEC",
-                "filing_type": "8-K",
-                "filing_date": "2023-10-24",
-                "accession_number": "0000300000-23-000003",
-                "html_url": "https://www.sec.gov/Archives/edgar/data/300000/000030000023000003/examplec-20231023.htm",
-                "sections": {
-                    "2.02": "<p>Results of Operations</p>" # No Item 1.05
-                }
-            }
-        ]
-        return mock_filings
-
-class MockMarkitdown:
-    def convert_html_to_md(self, html_content):
-        print("Converting HTML to Markdown...")
-        # Simple mock conversion, in a real scenario this would use markitdown's logic
-        return html_content.replace("<p>", "").replace("</p>", "\n\n").replace("<strong>", "**").replace("</strong>", "**")
+from datamule import Portfolio
+from markitdown import MarkItDown
 
 def get_quarter(month):
     if 1 <= month <= 3:
@@ -72,7 +18,7 @@ def get_quarter(month):
 
 def generate_markdown_content(filing, section_item, markdown_content):
     frontmatter = {
-        "ticker": filing["ticker"],
+        "ticker": filing.get("ticker", "N/A"),
         "cik": filing["cik"],
         "date": filing["filing_date"],
         "filing_type": filing["filing_type"],
@@ -98,7 +44,7 @@ def save_markdown_file(filing, section_item, content):
     output_dir = os.path.join("data", filing_type_dir, str(year), quarter)
     os.makedirs(output_dir, exist_ok=True)
 
-    file_name = f"{filing["cik"]}_{filing["filing_date"].replace("-", "")}_{filing_type_dir}_{section_item}.md"
+    file_name = f"{filing['cik']}_{filing['filing_date'].replace('-', '')}_{filing_type_dir}_{section_item}.md"
     file_path = os.path.join(output_dir, file_name)
 
     with open(file_path, "w", encoding="utf-8") as f:
@@ -107,18 +53,28 @@ def save_markdown_file(filing, section_item, content):
 
 def main():
     # Initialize clients
-    datamule_client = MockDatamuleClient() # Replace with actual Client()
-    markitdown_parser = MockMarkitdown() # Replace with actual Markitdown()
+    api_key = os.environ.get("DATAMULE_API_KEY")
+    if not api_key:
+        raise ValueError("DATAMULE_API_KEY environment variable not set.")
+    
+    portfolio = Portfolio(api_key=api_key)
+    markitdown_parser = Markitdown()
 
     # Define date range (last 24 hours)
     end_date = datetime.date.today()
     start_date = end_date - datetime.timedelta(days=1)
 
-    filings = datamule_client.get_filings(start_date.isoformat(), end_date.isoformat())
+    filings = portfolio.download_submissions(
+        start_date=start_date.isoformat(), 
+        end_date=end_date.isoformat()
+    )
 
-    for filing in filings:
+    for filing_meta in filings:
+        filing = portfolio.get_submission(accession_number=filing_meta['accession_number'])
         filing_type = filing["filing_type"]
-        sections = filing.get("sections", {}) # Ensure sections key exists
+        
+        # This part is a bit of a guess, assuming get_submission returns a dict with sections
+        sections = filing.get("sections", {})
 
         if filing_type == "8-K":
             if "1.05" in sections:
