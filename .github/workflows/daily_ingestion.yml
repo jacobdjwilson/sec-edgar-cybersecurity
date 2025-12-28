@@ -25,6 +25,8 @@ jobs:
         pip install -r .github/scripts/requirements.txt
 
     - name: Run ingestion script
+      env:
+        DATAMULE_API_KEY: ${{ secrets.DATAMULE_API_KEY }}
       run: python .github/scripts/ingestion.py
 
     - name: Commit and push changes
