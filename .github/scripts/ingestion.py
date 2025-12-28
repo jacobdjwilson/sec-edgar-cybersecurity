@@ -57,7 +57,7 @@ def main():
     if not api_key:
         raise ValueError("DATAMULE_API_KEY environment variable not set.")
     
-    portfolio = Portfolio(provider='datamule', api_key=api_key)
+    portfolio = Portfolio(api_key=api_key)
     markitdown_parser = Markitdown()
 
     # Define date range (last 24 hours)
