@@ -9,9 +9,8 @@ import re
 
 # Mock classes for datamule and markitdown for initial scaffolding
 class MockDatamuleClient:
-    def __init__(self, api_key):
-        self.api_key = api_key
-        print(f"Datamule client initialized with API key: {api_key[:4]}...")
+    def __init__(self):
+        print(f"Datamule client initialized in mock mode.")
 
     def get_filings(self, start_date, end_date):
         print(f"Fetching filings from {start_date} to {end_date}")
@@ -107,13 +106,8 @@ def save_markdown_file(filing, section_item, content):
     print(f"Saved: {file_path}")
 
 def main():
-    # Load API Key
-    data_mule_api_key = os.environ.get("DATA_MULE_API_KEY")
-    if not data_mule_api_key:
-        raise ValueError("DATA_MULE_API_KEY environment variable not set.")
-
     # Initialize clients
-    datamule_client = MockDatamuleClient(data_mule_api_key) # Replace with actual Client(data_mule_api_key)
+    datamule_client = MockDatamuleClient() # Replace with actual Client()
     markitdown_parser = MockMarkitdown() # Replace with actual Markitdown()
 
     # Define date range (last 24 hours)
