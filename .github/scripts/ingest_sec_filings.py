@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 import logging
 
-from datamule import Downloader
+from datamule import Portfolio
 
 # Configure logging
 logging.basicConfig(
@@ -33,9 +33,9 @@ class SECFilingIngestor:
         
         # Initialize downloader
         if self.api_key:
-            self.downloader = Downloader(provider='datamule', api_key=self.api_key)
+            self.downloader = Portfolio('sec-edgar-cybersecurity', provider='datamule', api_key=self.api_key)
         else:
-            self.downloader = Downloader(provider='sec')
+            self.downloader = Portfolio('sec-edgar-cybersecurity', provider='sec')
             logger.warning("No API key provided. Using SEC provider with rate limits.")
         
         # Create directories
