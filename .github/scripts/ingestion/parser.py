@@ -8,9 +8,7 @@ def _generate_markdown_content(filing, section_item, markdown_content):
         "filing_type": filing["filing_type"],
         "source_link": filing["html_url"],
     }
-    frontmatter_str = "---
-" + "\n".join([f"{key}: {value}" for key, value in frontmatter.items()]) + "\n---
-\n"
+        frontmatter_str = "---\n" + "\n".join([f"{key}: {value}" for key, value in frontmatter.items()]) + "\n---\n\n"
     
     section_title_map = {
         "1.05": "Item 1.05. Material Cybersecurity Incidents",
