@@ -42,7 +42,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r scripts/requirements.txt
+          pip install -r .github/scripts/requirements.txt
       
       - name: Run manual ingest
         env:
@@ -52,15 +52,15 @@ jobs:
           FILING_TYPE: ${{ github.event.inputs.filing_type }}
           TICKER: ${{ github.event.inputs.ticker }}
         run: |
-          python scripts/ingest_sec_filings.py --manual
+          python .github/scripts/ingest_sec_filings.py --manual
       
       - name: Parse and convert filings
         run: |
-          python scripts/parse_filings.py
+          python .github/scripts/parse_filings.py
       
       - name: Convert to Markdown
         run: |
-          python scripts/convert_to_markdown.py
+          python .github/scripts/convert_to_markdown.py
       
       - name: Commit and push changes
         run: |
