@@ -1,0 +1,81 @@
+name: Manual SEC Filing Ingest
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: 'Start date (YYYY-MM-DD)'
+        required: false
+        default: ''
+      end_date:
+        description: 'End date (YYYY-MM-DD)'
+        required: false
+        default: ''
+      filing_type:
+        description: 'Filing type (8-K, 10-K, or ALL)'
+        required: false
+        default: 'ALL'
+      ticker:
+        description: 'Specific ticker symbol (optional)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  manual-ingest:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r scripts/requirements.txt
+      
+      - name: Run manual ingest
+        env:
+          DATAMULE_API_KEY: ${{ secrets.DATAMULE_API_KEY }}
+          START_DATE: ${{ github.event.inputs.start_date }}
+          END_DATE: ${{ github.event.inputs.end_date }}
+          FILING_TYPE: ${{ github.event.inputs.filing_type }}
+          TICKER: ${{ github.event.inputs.ticker }}
+        run: |
+          python scripts/ingest_sec_filings.py --manual
+      
+      - name: Parse and convert filings
+        run: |
+          python scripts/parse_filings.py
+      
+      - name: Convert to Markdown
+        run: |
+          python scripts/convert_to_markdown.py
+      
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add data/
+          
+          if git diff --staged --quiet; then
+            echo "No new filings to commit"
+          else
+            COMMIT_MSG="chore: manual ingest"
+            if [ -n "${{ github.event.inputs.ticker }}" ]; then
+              COMMIT_MSG="$COMMIT_MSG for ${{ github.event.inputs.ticker }}"
+            fi
+            COMMIT_MSG="$COMMIT_MSG - $(date +'%Y-%m-%d')"
+            git commit -m "$COMMIT_MSG"
+            git push
+          fi
