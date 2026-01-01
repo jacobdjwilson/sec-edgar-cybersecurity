@@ -38,10 +38,17 @@ Each Markdown file will have the following structure:
 
 ```yaml
 ---
+name: [Company Name]
 ticker: [Company Ticker]
-cik: [Central Index Key]
+website: [Company Website]
+category: [Category of Disclosure]
+CIK: [Central Index Key]
+SIC: [SIC Description]
+filing_number: [Filing Number]
 date: [Filing Date YYYY-MM-DD]
 filing_type: [Filing Type, e.g., 8-K, 10-K]
+filling_quarter: [Filing Quarter]
+filling_year: [Filing Year]
 source_link: [Link to SEC Filing]
 ---
 
@@ -52,4 +59,4 @@ source_link: [Link to SEC Filing]
 
 ## Automation
 
-The data pipeline runs automatically on a daily schedule (6:00 AM ET) using GitHub Actions to continuously monitor and ingest new disclosures.
+This project runs entirely in Github and leverage github actionsThe data pipeline runs automatically on a daily schedule (6:00 AM ET) using GitHub Actions to continuously monitor and ingest new disclosures.
