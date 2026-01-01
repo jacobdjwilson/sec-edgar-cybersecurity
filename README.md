@@ -59,4 +59,4 @@ source_link: [Link to SEC Filing]
 
 ## Automation
 
-This project runs entirely in Github and leverage github actionsThe data pipeline runs automatically on a daily schedule (6:00 AM ET) using GitHub Actions to continuously monitor and ingest new disclosures.
+This project runs inside GitHub and is driven by GitHub Actions. A scheduled workflow executes daily at 6:00 AM ET, automatically monitoring for new cybersecurity disclosures and ingesting them as they appear. The pipeline is built on [datamule](https://github.com/john-friedman/datamule-python), a Python package created by [John Friedman](https://datamule.xyz/about) for working with SEC filings at scale.
