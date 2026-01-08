@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install datamule-python pandas pyyaml
+          pip install git+https://github.com/john-friedman/datamule-python.git pandas pyyaml
 
       - name: Run Fetch & Parse Script
         env:
