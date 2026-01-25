@@ -27,7 +27,7 @@ jobs:
       
       - name: Install dependencies
         run: |
-          pip install pyyaml jsonschema pandas
+          pip install -r .github/scripts/requirements.txt
       
       - name: Validate markdown files
         run: |
