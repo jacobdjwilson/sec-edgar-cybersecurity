@@ -1,0 +1,58 @@
+name: Data Validation
+
+on:
+  pull_request:
+    paths:
+      - 'data/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'data/**'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate Dataset
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install pyyaml jsonschema pandas
+      
+      - name: Validate markdown files
+        run: |
+          python .github/scripts/validate_dataset.py
+      
+      - name: Check for duplicates
+        run: |
+          python .github/scripts/check_duplicates.py
+      
+      - name: Generate validation report
+        if: always()
+        run: |
+          python .github/scripts/generate_validation_report.py > validation_report.md
+      
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('validation_report.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
