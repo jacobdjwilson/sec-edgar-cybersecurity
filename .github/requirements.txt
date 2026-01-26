@@ -1,8 +1,8 @@
-datamule
-pandas
-pyyaml
-jsonschema
-lxml
-beautifulsoup4
-requests
-html2text
+datamule>=0.1.0          # SEC filing access and management
+pandas>=2.0.0            # Data manipulation and analysis
+pyyaml>=6.0              # YAML frontmatter parsing
+lxml>=4.9.0              # XML/HTML parsing
+beautifulsoup4>=4.12.0   # HTML parsing and cleaning
+requests>=2.31.0         # HTTP requests
+html2text>=2020.1.16     # HTML to Markdown conversion
+jsonschema>=3.2.0        # JSON schema validation
