@@ -1,0 +1,23 @@
+{
+  "generated_at": "2026-01-26T21:43:48.749662",
+  "8K": {
+    "total": 0,
+    "unique_companies": 0,
+    "unique_tickers": 0,
+    "by_year": {},
+    "top_10_companies": {}
+  },
+  "10K": {
+    "total": 0,
+    "unique_companies": 0,
+    "unique_tickers": 0,
+    "by_year": {},
+    "by_item": {},
+    "top_10_companies": {}
+  },
+  "overall": {
+    "total_filings": 0,
+    "total_unique_companies": 0,
+    "total_unique_tickers": 0
+  }
+}
