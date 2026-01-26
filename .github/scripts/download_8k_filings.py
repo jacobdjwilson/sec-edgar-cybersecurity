@@ -1,98 +1,200 @@
 #!/usr/bin/env python3
-"""Download 8-K filings with cybersecurity disclosures (Item 1.05)."""
+"""Parse 8-K filings to extract Item 1.05 cybersecurity disclosures."""
 
 import os
-import sys
-import argparse
-from datetime import datetime, timedelta
+import re
+import yaml
+from pathlib import Path
+from datetime import datetime
 from datamule import Portfolio
+from bs4 import BeautifulSoup
+import html2text
 
-def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='Download 8-K filings')
-    parser.add_argument('--start-date', help='Start date (YYYY-MM-DD)', default='')
-    parser.add_argument('--end-date', help='End date (YYYY-MM-DD)', default='')
-    parser.add_argument('--provider', default='datamule', help='Provider (sec or datamule)')
-    return parser.parse_args()
+def extract_filing_metadata(submission):
+    """Extract metadata from submission."""
+    try:
+        # Access submission metadata
+        return {
+            'cik': getattr(submission, 'cik', 'unknown'),
+            'ticker': getattr(submission, 'ticker', 'unknown'),
+            'company_name': getattr(submission, 'company_name', 'Unknown Company'),
+            'filing_date': getattr(submission, 'filing_date', 'unknown'),
+            'accession_number': getattr(submission, 'accession', 'unknown'),
+        }
+    except Exception as e:
+        print(f"Warning: Could not extract metadata: {e}")
+        return None
 
-def get_date_range(start_date, end_date):
-    """Calculate date range for downloads."""
-    # Clean up: handle None, empty strings, and whitespace
-    start_date = str(start_date).strip() if start_date else ''
-    end_date = str(end_date).strip() if end_date else ''
+def extract_item_105(filing_text):
+    """Extract Item 1.05 content from 8-K filing."""
+    # Try multiple patterns for Item 1.05
+    patterns = [
+        r'Item\s+1\.05[^\n]*Material\s+Cybersecurity\s+Incidents[^\n]*(.*?)(?=Item\s+\d+\.\d+|Item\s+\d+|SIGNATURE|$)',
+        r'Item\s+1\.05[:\.]?\s*(.*?)(?=Item\s+\d+\.\d+|Item\s+\d+|SIGNATURE|$)',
+        r'<ITEM>1\.05</ITEM>(.*?)(?=<ITEM>|$)',
+    ]
     
-    # Also handle 'None' string that might come from workflow
-    if start_date.lower() == 'none':
-        start_date = ''
-    if end_date.lower() == 'none':
-        end_date = ''
+    for pattern in patterns:
+        match = re.search(pattern, filing_text, re.IGNORECASE | re.DOTALL)
+        if match:
+            content = match.group(1).strip()
+            if len(content) > 50:  # Ensure we got actual content
+                return content
     
-    # If both are empty, use yesterday for daily runs
-    if not start_date and not end_date:
-        yesterday = datetime.now() - timedelta(days=1)
-        result = (yesterday.strftime('%Y-%m-%d'), yesterday.strftime('%Y-%m-%d'))
-        print(f"Using default date range (yesterday): {result[0]} to {result[1]}")
-        return result
+    return None
+
+def html_to_markdown(html_content):
+    """Convert HTML to clean markdown."""
+    # Use html2text for conversion
+    h = html2text.HTML2Text()
+    h.ignore_links = False
+    h.ignore_images = False
+    h.ignore_emphasis = False
+    h.body_width = 0  # Don't wrap lines
     
-    # If both are provided and non-empty, use them
-    if start_date and end_date:
-        print(f"Using provided date range: {start_date} to {end_date}")
-        return (start_date, end_date)
+    # Clean up HTML first
+    soup = BeautifulSoup(html_content, 'lxml')
     
-    # If only one is provided, that's an error
-    raise ValueError(f"Both start_date and end_date must be provided, or neither. Got start='{start_date}', end='{end_date}'")
+    # Remove script and style tags
+    for tag in soup(['script', 'style']):
+        tag.decompose()
+    
+    markdown = h.handle(str(soup))
+    
+    # Clean up excessive whitespace
+    markdown = re.sub(r'\n{3,}', '\n\n', markdown)
+    markdown = markdown.strip()
+    
+    return markdown
+
+def create_markdown_file(metadata, content, output_dir):
+    """Create markdown file with YAML frontmatter."""
+    # Determine quarter
+    filing_date = metadata['filing_date']
+    try:
+        date_obj = datetime.strptime(filing_date, '%Y-%m-%d')
+        year = date_obj.year
+        quarter = f"Q{(date_obj.month - 1) // 3 + 1}"
+    except:
+        year = 'unknown'
+        quarter = 'unknown'
+    
+    # Create directory structure: data/8K/YEAR/QUARTER/
+    dir_path = Path(output_dir) / str(year) / quarter
+    dir_path.mkdir(parents=True, exist_ok=True)
+    
+    # Create filename: CIK_DATE_8K.md
+    filename = f"{metadata['cik']}_{filing_date}_8K.md"
+    filepath = dir_path / filename
+    
+    # Create YAML frontmatter
+    frontmatter = {
+        'ticker': metadata['ticker'],
+        'company_name': metadata['company_name'],
+        'cik': metadata['cik'],
+        'filing_date': filing_date,
+        'filing_type': '8-K',
+        'item': '1.05',
+        'accession_number': metadata['accession_number'],
+        'source_link': f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={metadata['cik']}&type=8-K&dateb=&owner=exclude&count=100",
+    }
+    
+    # Write markdown file
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write('---\n')
+        yaml.dump(frontmatter, f, default_flow_style=False, allow_unicode=True)
+        f.write('---\n\n')
+        f.write('## Item 1.05. Material Cybersecurity Incidents\n\n')
+        f.write(content)
+        f.write('\n')
+    
+    print(f"✓ Created: {filepath}")
+    return filepath
 
 def main():
-    """Download 8-K filings."""
-    args = parse_args()
+    """Parse 8-K filings for Item 1.05 disclosures."""
+    # Read download metadata
+    metadata_file = '.github/outputs/download_metadata.txt'
+    if os.path.exists(metadata_file):
+        with open(metadata_file, 'r') as f:
+            lines = f.readlines()
+            portfolio_dir = [l.split('=')[1].strip() for l in lines if l.startswith('portfolio_dir=')][0]
+    else:
+        portfolio_dir = 'sec_8k_downloads'
     
-    try:
-        # Set up date range
-        start_date, end_date = get_date_range(args.start_date, args.end_date)
-        print(f"\nDownloading 8-K filings from {start_date} to {end_date}")
-        print(f"Provider: {args.provider}\n")
+    print(f"Processing portfolio: {portfolio_dir}")
+    
+    # Initialize portfolio
+    portfolio = Portfolio(portfolio_dir)
+    
+    # Track statistics
+    total_filings = 0
+    item_105_found = 0
+    
+    # Process each submission
+    for submission in portfolio:
+        total_filings += 1
         
-        # Configure API key if available
-        api_key = os.environ.get('DATAMULE_API_KEY')
-        
-        # Initialize portfolio
-        portfolio_name = 'sec_8k_downloads'
-        portfolio = Portfolio(portfolio_name)
-        
-        if api_key:
-            print("✓ DATAMULE_API_KEY found")
-        else:
-            print("⚠ DATAMULE_API_KEY not set, using SEC rate limits")
-        
-        # Download 8-K filings
-        # Note: We download all 8-K filings, then filter for Item 1.05 during parsing
-        print("Downloading 8-K filings...")
-        
-        portfolio.download_submissions(
-            submission_type='8-K',
-            filing_date=(start_date, end_date),
-            provider=args.provider,
-            skip_existing=True
-        )
-        
-        # Use the portfolio name instead of portfolio_dir attribute
-        print(f"✓ Download complete. Files stored in: {portfolio_name}")
-        
-        # Write metadata for downstream parsing
-        os.makedirs('.github/outputs', exist_ok=True)
-        with open('.github/outputs/download_metadata.txt', 'w') as f:
-            f.write(f"portfolio_dir={portfolio_name}\n")
-            f.write(f"start_date={start_date}\n")
-            f.write(f"end_date={end_date}\n")
-            f.write(f"filing_type=8-K\n")
-        
-        print("✓ Metadata written successfully")
-        
-    except Exception as e:
-        print(f"\n✗ Error: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+        try:
+            # Extract metadata
+            metadata = extract_filing_metadata(submission)
+            if not metadata:
+                continue
+            
+            print(f"Processing: {metadata['ticker']} ({metadata['filing_date']})")
+            
+            # Get primary document (8-K form)
+            primary_doc = None
+            for document in submission:
+                # Look for the main 8-K document
+                if hasattr(document, 'extension') and document.extension in ['.htm', '.html', '.txt']:
+                    primary_doc = document
+                    break
+            
+            if not primary_doc:
+                print(f"  ✗ No 8-K document found")
+                continue
+            
+            # Read filing content using document.content
+            try:
+                filing_text = primary_doc.content
+                if isinstance(filing_text, bytes):
+                    filing_text = filing_text.decode('utf-8', errors='ignore')
+            except Exception as e:
+                print(f"  ✗ Error reading document: {e}")
+                continue
+            
+            # Extract Item 1.05
+            item_105_content = extract_item_105(filing_text)
+            
+            if item_105_content:
+                # Convert to markdown if it's HTML
+                if '<' in item_105_content and '>' in item_105_content:
+                    item_105_content = html_to_markdown(item_105_content)
+                
+                # Create markdown file
+                create_markdown_file(metadata, item_105_content, 'data/8K')
+                item_105_found += 1
+                print(f"  ✓ Found Item 1.05 disclosure")
+            else:
+                print(f"  - No Item 1.05 content found")
+                
+        except Exception as e:
+            print(f"  ✗ Error processing submission: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+    
+    # Write summary
+    print(f"\n{'='*60}")
+    print(f"Total 8-K filings processed: {total_filings}")
+    print(f"Item 1.05 disclosures found: {item_105_found}")
+    print(f"{'='*60}")
+    
+    os.makedirs('.github/outputs', exist_ok=True)
+    with open('.github/outputs/parse_8k_summary.txt', 'w') as f:
+        f.write(f"total_filings={total_filings}\n")
+        f.write(f"item_105_found={item_105_found}\n")
 
 if __name__ == '__main__':
     main()
