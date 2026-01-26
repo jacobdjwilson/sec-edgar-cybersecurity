@@ -56,7 +56,8 @@ def main():
         api_key = os.environ.get('DATAMULE_API_KEY')
         
         # Initialize portfolio
-        portfolio = Portfolio('sec_8k_downloads')
+        portfolio_name = 'sec_8k_downloads'
+        portfolio = Portfolio(portfolio_name)
         
         if api_key:
             print("✓ DATAMULE_API_KEY found")
@@ -74,12 +75,13 @@ def main():
             skip_existing=True
         )
         
-        print(f"✓ Download complete. Files stored in: {portfolio.portfolio_dir}")
+        # Use the portfolio name instead of portfolio_dir attribute
+        print(f"✓ Download complete. Files stored in: {portfolio_name}")
         
         # Write metadata for downstream parsing
         os.makedirs('.github/outputs', exist_ok=True)
         with open('.github/outputs/download_metadata.txt', 'w') as f:
-            f.write(f"portfolio_dir={portfolio.portfolio_dir}\n")
+            f.write(f"portfolio_dir={portfolio_name}\n")
             f.write(f"start_date={start_date}\n")
             f.write(f"end_date={end_date}\n")
             f.write(f"filing_type=8-K\n")
