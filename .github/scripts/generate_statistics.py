@@ -46,6 +46,11 @@ def analyze_directory(data_dir, filing_type):
     if filing_type == '10K':
         stats['by_item'] = defaultdict(int)
     
+    # Check if directory exists
+    if not os.path.exists(data_dir):
+        print(f"Directory {data_dir} does not exist yet")
+        return stats
+    
     # Walk through directory
     for filepath in Path(data_dir).rglob('*.md'):
         frontmatter = read_markdown_frontmatter(filepath)
@@ -96,24 +101,24 @@ def generate_summary(stats_8k, stats_10k):
     summary = {
         'generated_at': datetime.now().isoformat(),
         '8K': {
-            'total': stats_8k['total_filings'],
-            'unique_companies': len(stats_8k['companies']),
-            'unique_tickers': len(stats_8k['tickers']),
-            'by_year': dict(stats_8k['by_year']),
-            'top_10_companies': dict(Counter(stats_8k['by_ticker']).most_common(10)),
+            'total': stats_8k.get('total_filings', 0),
+            'unique_companies': len(stats_8k.get('companies', set())),
+            'unique_tickers': len(stats_8k.get('tickers', set())),
+            'by_year': dict(stats_8k.get('by_year', {})),
+            'top_10_companies': dict(Counter(stats_8k.get('by_ticker', {})).most_common(10)),
         },
         '10K': {
-            'total': stats_10k['total_filings'],
-            'unique_companies': len(stats_10k['companies']),
-            'unique_tickers': len(stats_10k['tickers']),
-            'by_year': dict(stats_10k['by_year']),
+            'total': stats_10k.get('total_filings', 0),
+            'unique_companies': len(stats_10k.get('companies', set())),
+            'unique_tickers': len(stats_10k.get('tickers', set())),
+            'by_year': dict(stats_10k.get('by_year', {})),
             'by_item': dict(stats_10k.get('by_item', {})),
-            'top_10_companies': dict(Counter(stats_10k['by_ticker']).most_common(10)),
+            'top_10_companies': dict(Counter(stats_10k.get('by_ticker', {})).most_common(10)),
         },
         'overall': {
-            'total_filings': stats_8k['total_filings'] + stats_10k['total_filings'],
-            'total_unique_companies': len(stats_8k['companies'] | stats_10k['companies']),
-            'total_unique_tickers': len(stats_8k['tickers'] | stats_10k['tickers']),
+            'total_filings': stats_8k.get('total_filings', 0) + stats_10k.get('total_filings', 0),
+            'total_unique_companies': len(stats_8k.get('companies', set()) | stats_10k.get('companies', set())),
+            'total_unique_tickers': len(stats_8k.get('tickers', set()) | stats_10k.get('tickers', set())),
         }
     }
     
@@ -124,8 +129,8 @@ def main():
     args = parse_args()
     
     # Analyze datasets
-    stats_8k = analyze_directory('data/8K', '8K') if args.filing_type in ['8K', 'ALL'] else defaultdict(int)
-    stats_10k = analyze_directory('data/10K', '10K') if args.filing_type in ['10K', 'ALL'] else defaultdict(int)
+    stats_8k = analyze_directory('data/8K', '8K') if args.filing_type in ['8K', 'ALL'] else {}
+    stats_10k = analyze_directory('data/10K', '10K') if args.filing_type in ['10K', 'ALL'] else {}
     
     # Generate summary
     summary = generate_summary(stats_8k, stats_10k)
