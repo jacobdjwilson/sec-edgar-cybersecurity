@@ -4,6 +4,9 @@ __pycache__/
 *$py.class
 *.so
 .Python
+env/
+venv/
+ENV/
 build/
 develop-eggs/
 dist/
@@ -20,24 +23,27 @@ wheels/
 .installed.cfg
 *.egg
 
-# Datamule portfolios
-sec_*_downloads/
-backfill_*/
-
 # GitHub Actions outputs
 .github/outputs/
 
-# Virtual environments
-venv/
-ENV/
-env/
+# Datamule portfolios (downloaded filings)
+sec_*_downloads/
+backfill_*/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+.cache/
