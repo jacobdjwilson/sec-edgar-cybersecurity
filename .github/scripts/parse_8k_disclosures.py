@@ -6,17 +6,19 @@ import re
 import yaml
 from pathlib import Path
 from datetime import datetime
-from datamule import Portfolio, Filing
+from datamule import Portfolio
 from bs4 import BeautifulSoup
 import html2text
 
 def extract_filing_metadata(submission):
     """Extract metadata from submission."""
     try:
+        # Access metadata attribute which contains all the filing info
         metadata = submission.metadata
+        
         return {
-            'cik': metadata.get('cik', '').lstrip('0') or metadata.get('cik', 'unknown'),
-            'ticker': metadata.get('ticker', 'unknown').upper(),
+            'cik': str(metadata.get('cik', 'unknown')).lstrip('0') or 'unknown',
+            'ticker': str(metadata.get('ticker', 'unknown')).upper(),
             'company_name': metadata.get('name', 'Unknown Company'),
             'filing_date': metadata.get('filing_date', 'unknown'),
             'accession_number': metadata.get('accession_number', 'unknown'),
@@ -29,8 +31,8 @@ def extract_item_105(filing_text):
     """Extract Item 1.05 content from 8-K filing."""
     # Try multiple patterns for Item 1.05
     patterns = [
-        r'Item\s+1\.05[^\n]*Material\s+Cybersecurity\s+Incidents[^\n]*(.*?)(?=Item\s+\d+\.\d+|Item\s+\d+|$)',
-        r'Item\s+1\.05[:\.]?\s*(.*?)(?=Item\s+\d+\.\d+|Item\s+\d+|$)',
+        r'Item\s+1\.05[^\n]*Material\s+Cybersecurity\s+Incidents[^\n]*(.*?)(?=Item\s+\d+\.\d+|Item\s+\d+|SIGNATURE|$)',
+        r'Item\s+1\.05[:\.]?\s*(.*?)(?=Item\s+\d+\.\d+|Item\s+\d+|SIGNATURE|$)',
         r'<ITEM>1\.05</ITEM>(.*?)(?=<ITEM>|$)',
     ]
     
@@ -114,7 +116,7 @@ def create_markdown_file(metadata, content, output_dir):
 def main():
     """Parse 8-K filings for Item 1.05 disclosures."""
     # Read download metadata
-    metadata_file = '.github/outputs/download_metadata.txt'
+    metadata_file = '.github/outputs/download_metadata_8k.txt'
     if os.path.exists(metadata_file):
         with open(metadata_file, 'r') as f:
             lines = f.readlines()
@@ -143,13 +145,27 @@ def main():
             
             print(f"Processing: {metadata['ticker']} ({metadata['filing_date']})")
             
-            # Get filing content
-            # Try to get the primary document
+            # Get filing documents - try to find the primary 8-K document
             primary_doc = None
             for document in submission.documents:
-                if document.document_type == '8-K':
+                # Look for the primary document (usually has type 8-K or is the first .htm/.html file)
+                doc_type = getattr(document, 'document_type', '')
+                doc_desc = getattr(document, 'description', '').lower()
+                doc_name = getattr(document, 'name', '').lower()
+                
+                # Check if this is likely the primary document
+                if doc_type == '8-K' or '8-k' in doc_desc or '8-k' in doc_name:
                     primary_doc = document
                     break
+            
+            # If we didn't find a specifically marked 8-K, take the first HTML document
+            if not primary_doc:
+                for document in submission.documents:
+                    if hasattr(document, 'path'):
+                        doc_path = str(document.path).lower()
+                        if doc_path.endswith(('.htm', '.html', '.txt')):
+                            primary_doc = document
+                            break
             
             if not primary_doc:
                 print(f"  ✗ No 8-K document found")
@@ -180,6 +196,8 @@ def main():
                 
         except Exception as e:
             print(f"  ✗ Error processing submission: {e}")
+            import traceback
+            traceback.print_exc()
             continue
     
     # Write summary
@@ -188,10 +206,10 @@ def main():
     print(f"Item 1.05 disclosures found: {item_105_found}")
     print(f"{'='*60}")
     
+    os.makedirs('.github/outputs', exist_ok=True)
     with open('.github/outputs/parse_8k_summary.txt', 'w') as f:
         f.write(f"total_filings={total_filings}\n")
         f.write(f"item_105_found={item_105_found}\n")
 
 if __name__ == '__main__':
-    os.makedirs('.github/outputs', exist_ok=True)
     main()
