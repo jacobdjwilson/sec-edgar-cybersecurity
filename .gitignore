@@ -38,7 +38,7 @@ backfill_*/
 *~
 
 # OS
-.DS_Store
+.DS_Store   
 Thumbs.db
 
 # Logs
