@@ -15,8 +15,8 @@ def extract_filing_metadata(submission):
     try:
         metadata = submission.metadata
         return {
-            'cik': metadata.get('cik', '').lstrip('0') or metadata.get('cik', 'unknown'),
-            'ticker': metadata.get('ticker', 'unknown').upper(),
+            'cik': str(metadata.get('cik', 'unknown')).lstrip('0') or 'unknown',
+            'ticker': str(metadata.get('ticker', 'unknown')).upper(),
             'company_name': metadata.get('name', 'Unknown Company'),
             'filing_date': metadata.get('filing_date', 'unknown'),
             'accession_number': metadata.get('accession_number', 'unknown'),
@@ -29,8 +29,8 @@ def extract_filing_metadata(submission):
 def extract_item_106(filing_text):
     """Extract Item 106 (Cybersecurity Risk Management) content."""
     patterns = [
-        r'Item\s+106[^\n]*Cybersecurity[^\n]*(.*?)(?=Item\s+\d+|ITEM\s+\d+|$)',
-        r'Item\s+1C[^\n]*Cybersecurity[^\n]*(.*?)(?=Item\s+\d+|ITEM\s+\d+|$)',  # Alternative numbering
+        r'Item\s+106[^\n]*Cybersecurity[^\n]*(.*?)(?=Item\s+\d+|ITEM\s+\d+|SIGNATURE|$)',
+        r'Item\s+1C[^\n]*Cybersecurity[^\n]*(.*?)(?=Item\s+\d+|ITEM\s+\d+|SIGNATURE|$)',  # Alternative numbering
         r'<ITEM>106</ITEM>(.*?)(?=<ITEM>|$)',
     ]
     
@@ -46,8 +46,8 @@ def extract_item_106(filing_text):
 def extract_item_407j(filing_text):
     """Extract Item 407(j) (Cybersecurity Governance) content."""
     patterns = [
-        r'Item\s+407\(j\)[^\n]*[^\n]*(.*?)(?=Item\s+\d+|ITEM\s+\d+|$)',
-        r'Item\s+407\s*\(j\)[^\n]*Cybersecurity[^\n]*(.*?)(?=Item\s+\d+|ITEM\s+\d+|$)',
+        r'Item\s+407\(j\)[^\n]*[^\n]*(.*?)(?=Item\s+\d+|ITEM\s+\d+|SIGNATURE|$)',
+        r'Item\s+407\s*\(j\)[^\n]*Cybersecurity[^\n]*(.*?)(?=Item\s+\d+|ITEM\s+\d+|SIGNATURE|$)',
         r'<ITEM>407\(j\)</ITEM>(.*?)(?=<ITEM>|$)',
     ]
     
@@ -175,12 +175,24 @@ def main():
             
             print(f"Processing: {metadata['ticker']} ({metadata['filing_date']})")
             
-            # Get filing content
+            # Get filing documents
             primary_doc = None
             for document in submission.documents:
-                if document.document_type == '10-K':
+                doc_type = getattr(document, 'document_type', '')
+                doc_desc = getattr(document, 'description', '').lower()
+                doc_name = getattr(document, 'name', '').lower()
+                
+                if doc_type == '10-K' or '10-k' in doc_desc or '10-k' in doc_name:
                     primary_doc = document
                     break
+            
+            if not primary_doc:
+                for document in submission.documents:
+                    if hasattr(document, 'path'):
+                        doc_path = str(document.path).lower()
+                        if doc_path.endswith(('.htm', '.html', '.txt')):
+                            primary_doc = document
+                            break
             
             if not primary_doc:
                 print(f"  ✗ No 10-K document found")
@@ -221,6 +233,8 @@ def main():
                 
         except Exception as e:
             print(f"  ✗ Error processing submission: {e}")
+            import traceback
+            traceback.print_exc()
             continue
     
     # Write summary
@@ -231,6 +245,7 @@ def main():
     print(f"Both items found: {both_found}")
     print(f"{'='*60}")
     
+    os.makedirs('.github/outputs', exist_ok=True)
     with open('.github/outputs/parse_10k_summary.txt', 'w') as f:
         f.write(f"total_filings={total_filings}\n")
         f.write(f"item_106_found={item_106_found}\n")
@@ -238,5 +253,4 @@ def main():
         f.write(f"both_found={both_found}\n")
 
 if __name__ == '__main__':
-    os.makedirs('.github/outputs', exist_ok=True)
     main()
