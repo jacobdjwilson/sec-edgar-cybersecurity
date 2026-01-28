@@ -10,7 +10,7 @@ import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# Import from datamule - use Portfolio, not Edgar
+# Import from datamule - use Portfolio only
 from datamule import Portfolio
 
 def parse_args():
