@@ -36,7 +36,8 @@ def backfill_filings(start_year, end_year, filing_type, use_datamule):
         print("Processing 8-K filings...")
         print("="*60)
         
-        portfolio = Portfolio(f'backfill_8k_{start_year}_{end_year}')
+        portfolio_dir = f'backfill_8k_{start_year}_{end_year}'
+        portfolio = Portfolio(portfolio_dir)
         if api_key:
             portfolio.set_api_key(api_key)
         
@@ -50,6 +51,14 @@ def backfill_filings(start_year, end_year, filing_type, use_datamule):
         
         print(f"✓ 8-K download complete")
         
+        # Write metadata for parsing script
+        os.makedirs('.github/outputs', exist_ok=True)
+        with open('.github/outputs/download_metadata_8k.txt', 'w') as f:
+            f.write(f"portfolio_dir={portfolio_dir}\n")
+            f.write(f"start_date={start_date}\n")
+            f.write(f"end_date={end_date}\n")
+            f.write(f"filing_type=8-K\n")
+        
         # Parse 8-K filings
         os.system(f'python .github/scripts/parse_8k_disclosures.py')
     
@@ -59,7 +68,8 @@ def backfill_filings(start_year, end_year, filing_type, use_datamule):
         print("Processing 10-K filings...")
         print("="*60)
         
-        portfolio = Portfolio(f'backfill_10k_{start_year}_{end_year}')
+        portfolio_dir = f'backfill_10k_{start_year}_{end_year}'
+        portfolio = Portfolio(portfolio_dir)
         if api_key:
             portfolio.set_api_key(api_key)
         
@@ -72,6 +82,14 @@ def backfill_filings(start_year, end_year, filing_type, use_datamule):
         )
         
         print(f"✓ 10-K download complete")
+        
+        # Write metadata for parsing script
+        os.makedirs('.github/outputs', exist_ok=True)
+        with open('.github/outputs/download_metadata_10k.txt', 'w') as f:
+            f.write(f"portfolio_dir={portfolio_dir}\n")
+            f.write(f"start_date={start_date}\n")
+            f.write(f"end_date={end_date}\n")
+            f.write(f"filing_type=10-K\n")
         
         # Parse 10-K filings
         os.system(f'python .github/scripts/parse_10k_disclosures.py')
