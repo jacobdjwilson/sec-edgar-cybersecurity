@@ -24,6 +24,10 @@ on:
           - '10-K'
           - 'both'
 
+permissions:
+  contents: write
+  issues: write
+  
 env:
   DATAMULE_API_KEY: ${{ secrets.DATAMULE_API_KEY }}
   PYTHON_VERSION: '3.11'
