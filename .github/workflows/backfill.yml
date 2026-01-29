@@ -72,8 +72,8 @@ jobs:
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add data/
-          git add stats/
+          git add data/ || echo "No data directory to add"
+          git add stats/ || echo "No stats directory to add"
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
