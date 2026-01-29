@@ -13,15 +13,13 @@ import html2text
 def extract_filing_metadata(submission):
     """Extract metadata from submission."""
     try:
-        # Access metadata attribute which contains all the filing info
-        metadata = submission.metadata
-        
+        # Access submission metadata directly via attributes
         return {
-            'cik': str(metadata.get('cik', 'unknown')).lstrip('0') or 'unknown',
-            'ticker': str(metadata.get('ticker', 'unknown')).upper(),
-            'company_name': metadata.get('name', 'Unknown Company'),
-            'filing_date': metadata.get('filing_date', 'unknown'),
-            'accession_number': metadata.get('accession_number', 'unknown'),
+            'cik': str(getattr(submission, 'cik', 'unknown')).lstrip('0') or 'unknown',
+            'ticker': str(getattr(submission, 'ticker', 'unknown')).upper(),
+            'company_name': getattr(submission, 'company_name', 'Unknown Company'),
+            'filing_date': getattr(submission, 'filing_date', 'unknown'),
+            'accession_number': getattr(submission, 'accession', 'unknown'),
         }
     except Exception as e:
         print(f"Warning: Could not extract metadata: {e}")
@@ -145,38 +143,26 @@ def main():
             
             print(f"Processing: {metadata['ticker']} ({metadata['filing_date']})")
             
-            # Get filing documents - try to find the primary 8-K document
+            # Get primary document (8-K form)
+            # Iterate through submission as document container
             primary_doc = None
-            for document in submission.documents:
-                # Look for the primary document (usually has type 8-K or is the first .htm/.html file)
-                doc_type = getattr(document, 'document_type', '')
-                doc_desc = getattr(document, 'description', '').lower()
-                doc_name = getattr(document, 'name', '').lower()
-                
-                # Check if this is likely the primary document
-                if doc_type == '8-K' or '8-k' in doc_desc or '8-k' in doc_name:
+            for document in submission:
+                # Look for the main 8-K document
+                if hasattr(document, 'extension') and document.extension in ['.htm', '.html', '.txt']:
                     primary_doc = document
                     break
-            
-            # If we didn't find a specifically marked 8-K, take the first HTML document
-            if not primary_doc:
-                for document in submission.documents:
-                    if hasattr(document, 'path'):
-                        doc_path = str(document.path).lower()
-                        if doc_path.endswith(('.htm', '.html', '.txt')):
-                            primary_doc = document
-                            break
             
             if not primary_doc:
                 print(f"  ✗ No 8-K document found")
                 continue
             
-            # Read filing content
+            # Read filing content using document.content
             try:
-                with open(primary_doc.path, 'r', encoding='utf-8', errors='ignore') as f:
-                    filing_text = f.read()
+                filing_text = primary_doc.content
+                if isinstance(filing_text, bytes):
+                    filing_text = filing_text.decode('utf-8', errors='ignore')
             except Exception as e:
-                print(f"  ✗ Error reading file: {e}")
+                print(f"  ✗ Error reading document: {e}")
                 continue
             
             # Extract Item 1.05
