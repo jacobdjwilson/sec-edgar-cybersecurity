@@ -1,0 +1,39 @@
+--- REPOSITORY METADATA ---
+name:	jacobdjwilson/sec-edgar-cybersecurity
+description:	Analyzing SEC EDGAR periodic reports, filings and forms relevant to Cybersecurity
+--
+# SEC EDGAR Cybersecurity Disclosures
+
+## Project Mission
+
+This a placeholder for now
+
+--- REPOSITORY SETTINGS & TOPICS ---
+{"description":"Analyzing SEC EDGAR periodic reports, filings and forms relevant to Cybersecurity","repositoryTopics":null,"stargazerCount":0,"updatedAt":"2026-01-29T15:59:55Z"}
+
+--- REPOSITORY STRUCTURE (ARTIFACTS) ---
+.github
+.github/scripts
+.github/scripts/backfill_historical.py
+.github/scripts/check_duplicates.py
+.github/scripts/configure_datamule.py
+.github/scripts/download_10k_filings.py
+.github/scripts/download_8k_filings.py
+.github/scripts/generate_daily_summary.py
+.github/scripts/generate_statistics.py
+.github/scripts/generate_validation_report.py
+.github/scripts/ingest_filings.py
+.github/scripts/parse_10k_disclosures.py
+.github/scripts/parse_8k_disclosures.py
+.github/scripts/requirements.txt
+.github/scripts/validate_dataset.py
+.github/workflows
+.github/workflows/backfill.yml
+.github/workflows/daily-ingestion.yml
+.github/workflows/data-validation.yml
+.gitignore
+LICENSE
+README.md
+stats
+stats/README.md
+stats/summary.json

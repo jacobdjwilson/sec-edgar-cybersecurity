@@ -4,79 +4,74 @@ on:
   workflow_dispatch:
     inputs:
       start_year:
-        description: 'Start year (e.g., 2023)'
+        description: "Start year (e.g. 2023)"
         required: true
-        type: string
+        default: "2023"
       end_year:
-        description: 'End year (e.g., 2024)'
+        description: "End year (e.g. 2024)"
         required: true
-        type: string
+        default: "2024"
       filing_type:
-        description: 'Filing type'
+        description: "Filing type to backfill"
         required: true
+        default: "both"
         type: choice
         options:
+          - both
           - 8-K
           - 10-K
-          - both
-      use_datamule_provider:
-        description: 'Use datamule provider (faster, costs $1/100k downloads)'
-        required: true
+      use_provider:
+        description: "Use datamule provider (faster, costs $1/100k downloads)"
+        required: false
         type: boolean
         default: false
 
-env:
-  DATAMULE_API_KEY: ${{ secrets.DATAMULE_API_KEY }}
-  PYTHON_VERSION: '3.11'
-
 jobs:
   backfill:
-    name: Backfill ${{ inputs.filing_type }} from ${{ inputs.start_year }} to ${{ inputs.end_year }}
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours max
-    
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      
+          python-version: "3.11"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r .github/scripts/requirements.txt
-      
-      - name: Configure datamule
+
+      - name: Configure datamule API key
+        env:
+          DATAMULE_API_KEY: ${{ secrets.DATAMULE_API_KEY }}
+        run: python .github/scripts/configure_datamule.py
+        continue-on-error: true
+
+      - name: Run historical backfill
+        env:
+          DATAMULE_API_KEY: ${{ secrets.DATAMULE_API_KEY }}
         run: |
-          python .github/scripts/configure_datamule.py
-      
-      - name: Run backfill
-        run: |
+          PROVIDER_FLAG=""
+          if [ "${{ github.event.inputs.use_provider }}" = "true" ]; then
+            PROVIDER_FLAG="--use-provider"
+          fi
           python .github/scripts/backfill_historical.py \
-            --start-year "${{ inputs.start_year }}" \
-            --end-year "${{ inputs.end_year }}" \
-            --filing-type "${{ inputs.filing_type }}" \
-            --use-datamule-provider "${{ inputs.use_datamule_provider }}"
-      
-      - name: Generate statistics
-        run: |
-          python .github/scripts/generate_statistics.py --filing-type ALL
-      
-      - name: Commit and push changes
-        if: success()
+            --start-year ${{ github.event.inputs.start_year }} \
+            --end-year ${{ github.event.inputs.end_year }} \
+            --filing-type ${{ github.event.inputs.filing_type }} \
+            $PROVIDER_FLAG
+
+      - name: Commit backfilled data
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add data/ || echo "No data directory to add"
-          git add stats/ || echo "No stats directory to add"
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "chore: backfill ${{ inputs.filing_type }} filings (${{ inputs.start_year }}-${{ inputs.end_year }})"
-            git push
-          fi
+          git add data/ stats/
+          git diff --staged --quiet || git commit -m "chore: backfill SEC filings ${{ github.event.inputs.start_year }}-${{ github.event.inputs.end_year }} (${{ github.event.inputs.filing_type }})"
+          git push

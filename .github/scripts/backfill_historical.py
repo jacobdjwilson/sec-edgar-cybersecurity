@@ -1,113 +1,110 @@
 #!/usr/bin/env python3
-"""Backfill historical SEC filings."""
+"""
+Backfill historical SEC cybersecurity filings for a given year range.
+Downloads and parses 8-K and/or 10-K filings for the specified period.
+"""
 
-import os
 import argparse
-from datetime import datetime
-from datamule import Portfolio
+import subprocess
+import sys
+from datetime import date
+from pathlib import Path
+
 
 def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='Backfill historical data')
-    parser.add_argument('--start-year', required=True, type=int)
-    parser.add_argument('--end-year', required=True, type=int)
-    parser.add_argument('--filing-type', required=True, choices=['8-K', '10-K', 'both'])
-    parser.add_argument('--use-datamule-provider', type=bool, default=False)
+    parser = argparse.ArgumentParser(description="Backfill historical SEC cybersecurity filings")
+    parser.add_argument("--start-year", type=int, required=True, help="Start year (e.g. 2023)")
+    parser.add_argument("--end-year", type=int, required=True, help="End year (e.g. 2024)")
+    parser.add_argument(
+        "--filing-type",
+        type=str,
+        default="both",
+        choices=["8-K", "10-K", "both"],
+        help="Filing type to backfill",
+    )
+    parser.add_argument(
+        "--use-provider",
+        action="store_true",
+        help="Use datamule provider for faster downloads (costs $1/100k downloads)",
+    )
     return parser.parse_args()
 
-def backfill_filings(start_year, end_year, filing_type, use_datamule):
-    """Backfill filings for date range."""
-    start_date = f"{start_year}-01-01"
-    end_date = f"{end_year}-12-31"
-    
-    provider = 'datamule-tar' if use_datamule else 'sec'
-    
-    print(f"Backfilling {filing_type} from {start_date} to {end_date}")
-    print(f"Using provider: {provider}")
-    
-    # Configure API key if using datamule
-    api_key = os.environ.get('DATAMULE_API_KEY')
-    if use_datamule and not api_key:
-        raise ValueError("DATAMULE_API_KEY required when using datamule provider")
-    
-    # Process 8-K filings
-    if filing_type in ['8-K', 'both']:
-        print("\n" + "="*60)
-        print("Processing 8-K filings...")
-        print("="*60)
-        
-        portfolio_dir = f'backfill_8k_{start_year}_{end_year}'
-        portfolio = Portfolio(portfolio_dir)
-        if api_key:
-            portfolio.set_api_key(api_key)
-        
-        portfolio.download_submissions(
-            submission_type='8-K',
-            filing_date=(start_date, end_date),
-            provider=provider,
-            requests_per_second=7 if provider == 'sec' else None,
-            skip_existing=True
-        )
-        
-        print(f"✓ 8-K download complete")
-        
-        # Write metadata for parsing script
-        os.makedirs('.github/outputs', exist_ok=True)
-        with open('.github/outputs/download_metadata_8k.txt', 'w') as f:
-            f.write(f"portfolio_dir={portfolio_dir}\n")
-            f.write(f"start_date={start_date}\n")
-            f.write(f"end_date={end_date}\n")
-            f.write(f"filing_type=8-K\n")
-        
-        # Parse 8-K filings
-        os.system(f'python .github/scripts/parse_8k_disclosures.py')
-    
-    # Process 10-K filings
-    if filing_type in ['10-K', 'both']:
-        print("\n" + "="*60)
-        print("Processing 10-K filings...")
-        print("="*60)
-        
-        portfolio_dir = f'backfill_10k_{start_year}_{end_year}'
-        portfolio = Portfolio(portfolio_dir)
-        if api_key:
-            portfolio.set_api_key(api_key)
-        
-        portfolio.download_submissions(
-            submission_type='10-K',
-            filing_date=(start_date, end_date),
-            provider=provider,
-            requests_per_second=7 if provider == 'sec' else None,
-            skip_existing=True
-        )
-        
-        print(f"✓ 10-K download complete")
-        
-        # Write metadata for parsing script
-        os.makedirs('.github/outputs', exist_ok=True)
-        with open('.github/outputs/download_metadata_10k.txt', 'w') as f:
-            f.write(f"portfolio_dir={portfolio_dir}\n")
-            f.write(f"start_date={start_date}\n")
-            f.write(f"end_date={end_date}\n")
-            f.write(f"filing_type=10-K\n")
-        
-        # Parse 10-K filings
-        os.system(f'python .github/scripts/parse_10k_disclosures.py')
+
+def run_script(script: str, extra_args: list[str] = None):
+    cmd = [sys.executable, script] + (extra_args or [])
+    print(f"Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        print(f"ERROR: Script failed with exit code {result.returncode}")
+        sys.exit(result.returncode)
+
 
 def main():
-    """Run backfill."""
     args = parse_args()
-    
-    backfill_filings(
-        args.start_year,
-        args.end_year,
-        args.filing_type,
-        args.use_datamule_provider
-    )
-    
-    print("\n" + "="*60)
-    print("✓ Backfill complete!")
-    print("="*60)
 
-if __name__ == '__main__':
+    scripts_dir = Path(__file__).parent
+
+    for year in range(args.start_year, args.end_year + 1):
+        start_date = f"{year}-01-01"
+        end_date = f"{year}-12-31"
+
+        # Cap end date to today if it's in the future
+        today = date.today()
+        if date.fromisoformat(end_date) > today:
+            end_date = today.isoformat()
+
+        print(f"\n{'='*60}")
+        print(f"Processing year {year}: {start_date} → {end_date}")
+        print(f"{'='*60}")
+
+        do_8k = args.filing_type in ("8-K", "both")
+        do_10k = args.filing_type in ("10-K", "both")
+
+        provider_flag = ["--use-provider"] if args.use_provider else []
+
+        if do_8k:
+            print(f"\n--- Downloading 8-K filings for {year} ---")
+            run_script(
+                str(scripts_dir / "download_8k_filings.py"),
+                [
+                    "--start-date", start_date,
+                    "--end-date", end_date,
+                    "--output-dir", f"raw_filings/8K/{year}",
+                ] + provider_flag,
+            )
+            print(f"\n--- Parsing 8-K filings for {year} ---")
+            run_script(
+                str(scripts_dir / "parse_8k_disclosures.py"),
+                [
+                    "--input-dir", f"raw_filings/8K/{year}",
+                    "--output-dir", "data/8K",
+                ],
+            )
+
+        if do_10k:
+            print(f"\n--- Downloading 10-K filings for {year} ---")
+            run_script(
+                str(scripts_dir / "download_10k_filings.py"),
+                [
+                    "--start-date", start_date,
+                    "--end-date", end_date,
+                    "--output-dir", f"raw_filings/10K/{year}",
+                ] + provider_flag,
+            )
+            print(f"\n--- Parsing 10-K filings for {year} ---")
+            run_script(
+                str(scripts_dir / "parse_10k_disclosures.py"),
+                [
+                    "--input-dir", f"raw_filings/10K/{year}",
+                    "--output-dir", "data/10K",
+                ],
+            )
+
+    print("\n--- Generating statistics ---")
+    run_script(str(scripts_dir / "generate_statistics.py"))
+
+    print("\nBackfill complete!")
+
+
+if __name__ == "__main__":
     main()

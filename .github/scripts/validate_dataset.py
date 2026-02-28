@@ -1,72 +1,110 @@
 #!/usr/bin/env python3
-"""Validate markdown files in dataset."""
+"""
+Validate all Markdown files in the dataset.
+Checks:
+  - YAML frontmatter is present and parseable
+  - Required fields are present
+  - Field values are of expected types
+  - Filing dates are valid
+"""
 
-import yaml
+import sys
 from pathlib import Path
 
-def validate_frontmatter(filepath, filing_type):
-    """Validate YAML frontmatter."""
-    with open(filepath, 'r', encoding='utf-8') as f:
+import yaml
+
+REQUIRED_FIELDS_8K = ["ticker", "company_name", "cik", "filing_date", "filing_type", "item", "accession_number"]
+REQUIRED_FIELDS_10K = ["ticker", "company_name", "cik", "filing_date", "filing_type", "items", "accession_number"]
+
+VALID_FILING_TYPES = {"8-K", "10-K"}
+VALID_8K_ITEMS = {"1.05"}
+VALID_10K_ITEMS = {106, "406j", "407j"}
+
+
+def parse_frontmatter(md_path: Path):
+    with open(md_path, "r", encoding="utf-8") as f:
         content = f.read()
-    
-    if not content.startswith('---'):
-        return False, "Missing frontmatter"
-    
-    parts = content.split('---', 2)
+
+    if not content.startswith("---"):
+        return None, ["Missing YAML frontmatter (file must start with ---)"]
+
+    parts = content.split("---", 2)
     if len(parts) < 3:
-        return False, "Invalid frontmatter format"
-    
+        return None, ["Malformed YAML frontmatter (could not find closing ---)"]
+
     try:
-        frontmatter = yaml.safe_load(parts[1])
-    except Exception as e:
-        return False, f"Invalid YAML: {e}"
-    
-    # Check required fields
-    required_fields = ['ticker', 'cik', 'filing_date', 'filing_type', 'source_link']
-    
-    for field in required_fields:
-        if field not in frontmatter:
-            return False, f"Missing required field: {field}"
-    
-    # Validate filing type specific fields
-    if filing_type == '8K':
-        if 'item' not in frontmatter or frontmatter['item'] != '1.05':
-            return False, "8-K must have item: 1.05"
-    
-    if filing_type == '10K':
-        if 'items' not in frontmatter or not frontmatter['items']:
-            return False, "10-K must have items list"
-    
-    return True, "Valid"
+        fm = yaml.safe_load(parts[1])
+        return fm, []
+    except yaml.YAMLError as e:
+        return None, [f"Invalid YAML: {e}"]
+
+
+def validate_file(md_path: Path) -> list[str]:
+    errors = []
+
+    fm, parse_errors = parse_frontmatter(md_path)
+    if parse_errors:
+        return parse_errors
+    if fm is None:
+        return ["Empty frontmatter"]
+
+    filing_type = fm.get("filing_type", "")
+    if filing_type not in VALID_FILING_TYPES:
+        errors.append(f"Invalid filing_type: '{filing_type}' (expected 8-K or 10-K)")
+
+    if filing_type == "8-K":
+        for field in REQUIRED_FIELDS_8K:
+            if not fm.get(field):
+                errors.append(f"Missing required field: {field}")
+        item = fm.get("item")
+        if item and str(item) not in VALID_8K_ITEMS:
+            errors.append(f"Unexpected 8-K item value: {item}")
+
+    elif filing_type == "10-K":
+        for field in REQUIRED_FIELDS_10K:
+            if not fm.get(field):
+                errors.append(f"Missing required field: {field}")
+        items = fm.get("items", [])
+        if not isinstance(items, list):
+            errors.append(f"'items' should be a list, got {type(items).__name__}")
+
+    # Validate filing_date format
+    filing_date = str(fm.get("filing_date", ""))
+    if filing_date and len(filing_date) != 10:
+        errors.append(f"filing_date '{filing_date}' does not match YYYY-MM-DD format")
+
+    return errors
+
 
 def main():
-    """Validate all markdown files."""
-    errors = []
-    total_files = 0
-    
-    # Validate 8-K files
-    for filepath in Path('data/8K').rglob('*.md'):
-        total_files += 1
-        valid, message = validate_frontmatter(filepath, '8K')
-        if not valid:
-            errors.append(f"{filepath}: {message}")
-    
-    # Validate 10-K files
-    for filepath in Path('data/10K').rglob('*.md'):
-        total_files += 1
-        valid, message = validate_frontmatter(filepath, '10K')
-        if not valid:
-            errors.append(f"{filepath}: {message}")
-    
-    print(f"Validated {total_files} files")
-    
-    if errors:
-        print(f"\n❌ Found {len(errors)} errors:")
-        for error in errors:
-            print(f"  - {error}")
-        exit(1)
-    else:
-        print("✅ All files valid")
+    data_dir = Path("data")
+    if not data_dir.exists():
+        print("No data/ directory found. Nothing to validate.")
+        sys.exit(0)
 
-if __name__ == '__main__':
+    md_files = list(data_dir.glob("**/*.md"))
+    # Exclude parse_summary.json-adjacent files
+    md_files = [f for f in md_files if f.name != "README.md"]
+
+    print(f"Validating {len(md_files)} Markdown files...")
+
+    all_errors = {}
+    for md_file in md_files:
+        errors = validate_file(md_file)
+        if errors:
+            all_errors[str(md_file)] = errors
+
+    if all_errors:
+        print(f"\n❌ Validation FAILED — {len(all_errors)} file(s) have errors:\n")
+        for path, errors in sorted(all_errors.items()):
+            print(f"  {path}:")
+            for err in errors:
+                print(f"    - {err}")
+        sys.exit(1)
+    else:
+        print(f"✅ All {len(md_files)} files passed validation.")
+        sys.exit(0)
+
+
+if __name__ == "__main__":
     main()
