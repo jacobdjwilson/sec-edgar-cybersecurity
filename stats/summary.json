@@ -1,16 +1,16 @@
 {
-  "generated_at": "2026-01-29T00:00:00",
-  "total_filings": 0,
-  "by_filing_type": {
-    "8-K": 0,
-    "10-K": 0
+  "generated_at": "1970-01-01T00:00:00Z",
+  "totals": {
+    "8K_filings": 0,
+    "10K_filings": 0,
+    "total_filings": 0,
+    "8K_material_incident_1_05": 0,
+    "8K_voluntary_8_01": 0
   },
-  "unique_companies": 0,
-  "unique_tickers": 0,
-  "by_year": {},
-  "by_quarter": {},
-  "by_year_quarter": {},
-  "top_companies_by_filing_count": [],
-  "10k_item_106_count": 0,
-  "10k_item_407j_count": 0
+  "by_item": {},
+  "monthly_trend": {},
+  "yearly_trend": {},
+  "top_25_companies_by_disclosure_count": [],
+  "most_recent_8K": [],
+  "most_recent_10K": []
 }

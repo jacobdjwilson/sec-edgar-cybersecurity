@@ -1,0 +1,83 @@
+name: Update Cybersecurity Filings
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC (after SEC EDGAR nightly processing)
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      backfill:
+        description: "Delete state files and re-run full history"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    name: Fetch & Commit New Filings
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install datamule
+
+      - name: Clear state for backfill
+        if: inputs.backfill == 'true'
+        run: |
+          rm -f stats/last_run_8k.txt stats/last_run_10k.txt
+          echo "State cleared — will re-fetch full history"
+
+      - name: Fetch 8-K cybersecurity filings
+        env:
+          DATAMULE_API_KEY: ${{ secrets.DATAMULE_API_KEY }}
+        run: python .github/scripts/fetch_8k.py
+
+      - name: Fetch 10-K cybersecurity disclosures
+        env:
+          DATAMULE_API_KEY: ${{ secrets.DATAMULE_API_KEY }}
+        run: python .github/scripts/fetch_10k.py
+
+      - name: Build summary statistics
+        run: python .github/scripts/build_stats.py
+
+      - name: Clean up temporary download directories
+        run: |
+          rm -rf 8K/_tmp_8k 10K/_tmp_10k
+          echo "Temp dirs removed"
+
+      - name: Commit and push new data
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add 8K/ 10K/ stats/
+
+          # Only commit if there are actual changes
+          if git diff --cached --quiet; then
+            echo "No new filings — nothing to commit"
+          else
+            NEW_8K=$(git diff --cached --name-only | grep "^8K/" | grep "metadata.json" | wc -l)
+            NEW_10K=$(git diff --cached --name-only | grep "^10K/" | grep "metadata.json" | wc -l)
+            MSG="data: +${NEW_8K} 8-K, +${NEW_10K} 10-K filings [$(date -u '+%Y-%m-%d')]"
+            git commit -m "$MSG"
+            git push
+            echo "Committed: $MSG"
+          fi

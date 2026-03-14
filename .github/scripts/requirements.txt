@@ -1,8 +1,5 @@
-datamule>=0.1.0
-pandas>=2.0.0
-pyyaml>=6.0
-lxml>=4.9.0
-beautifulsoup4>=4.12.0
-requests>=2.31.0
-html2text>=2020.1.16
-jsonschema>=3.2.0
+# Core data ingestion
+datamule>=0.4.0
+
+# Optional — for analyze.py pandas output
+# pandas>=2.0.0

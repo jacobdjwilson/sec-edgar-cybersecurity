@@ -1,77 +1,98 @@
-name: Backfill Historical Data
+name: Backfill Full History
 
 on:
   workflow_dispatch:
     inputs:
-      start_year:
-        description: "Start year (e.g. 2023)"
-        required: true
-        default: "2023"
-      end_year:
-        description: "End year (e.g. 2024)"
-        required: true
-        default: "2024"
-      filing_type:
-        description: "Filing type to backfill"
-        required: true
+      start_date:
+        description: "Start date for backfill (YYYY-MM-DD). Defaults to 2023-12-18."
+        required: false
+        default: "2023-12-18"
+      form_types:
+        description: "Which form types to backfill"
+        required: false
         default: "both"
         type: choice
         options:
           - both
-          - 8-K
-          - 10-K
-      use_provider:
-        description: "Use datamule provider (faster, costs $1/100k downloads)"
-        required: false
-        type: boolean
-        default: false
+          - 8K
+          - 10K
+
+permissions:
+  contents: write
 
 jobs:
   backfill:
+    name: Full Historical Backfill
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 360   # 6 hours — full history can be large
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
+          cache: "pip"
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r .github/scripts/requirements.txt
+        run: pip install datamule
 
-      - name: Configure datamule API key
-        env:
-          DATAMULE_API_KEY: ${{ secrets.DATAMULE_API_KEY }}
-        run: python .github/scripts/configure_datamule.py
-        continue-on-error: true
-
-      - name: Run historical backfill
-        env:
-          DATAMULE_API_KEY: ${{ secrets.DATAMULE_API_KEY }}
+      - name: Clear state files
         run: |
-          PROVIDER_FLAG=""
-          if [ "${{ github.event.inputs.use_provider }}" = "true" ]; then
-            PROVIDER_FLAG="--use-provider"
+          rm -f stats/last_run_8k.txt stats/last_run_10k.txt
+          echo "State cleared — full backfill from ${{ inputs.start_date }}"
+
+      - name: Inject custom start date
+        run: |
+          # Write a temporary override so scripts pick up the custom start date
+          mkdir -p stats
+          if [ "${{ inputs.form_types }}" != "10K" ]; then
+            # Set last_run to one day before start so scripts compute correct range
+            python -c "
+          from datetime import datetime, timedelta
+          d = datetime.strptime('${{ inputs.start_date }}', '%Y-%m-%d') - timedelta(days=1)
+          print(d.strftime('%Y-%m-%d'))
+          " > stats/last_run_8k.txt
           fi
-          python .github/scripts/backfill_historical.py \
-            --start-year ${{ github.event.inputs.start_year }} \
-            --end-year ${{ github.event.inputs.end_year }} \
-            --filing-type ${{ github.event.inputs.filing_type }} \
-            $PROVIDER_FLAG
+          if [ "${{ inputs.form_types }}" != "8K" ]; then
+            python -c "
+          from datetime import datetime, timedelta
+          d = datetime.strptime('${{ inputs.start_date }}', '%Y-%m-%d') - timedelta(days=1)
+          print(d.strftime('%Y-%m-%d'))
+          " > stats/last_run_10k.txt
+          fi
 
-      - name: Commit backfilled data
+      - name: Fetch 8-K cybersecurity filings
+        if: inputs.form_types == 'both' || inputs.form_types == '8K'
+        env:
+          DATAMULE_API_KEY: ${{ secrets.DATAMULE_API_KEY }}
+        run: python .github/scripts/fetch_8k.py
+
+      - name: Fetch 10-K cybersecurity disclosures
+        if: inputs.form_types == 'both' || inputs.form_types == '10K'
+        env:
+          DATAMULE_API_KEY: ${{ secrets.DATAMULE_API_KEY }}
+        run: python .github/scripts/fetch_10k.py
+
+      - name: Build summary statistics
+        run: python .github/scripts/build_stats.py
+
+      - name: Clean up temp dirs
+        run: rm -rf 8K/_tmp_8k 10K/_tmp_10k
+
+      - name: Commit and push
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add data/ stats/
-          git diff --staged --quiet || git commit -m "chore: backfill SEC filings ${{ github.event.inputs.start_year }}-${{ github.event.inputs.end_year }} (${{ github.event.inputs.filing_type }})"
-          git push
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add 8K/ 10K/ stats/
+          if git diff --cached --quiet; then
+            echo "Nothing new to commit after backfill"
+          else
+            COUNT=$(git diff --cached --name-only | grep "metadata.json" | wc -l)
+            git commit -m "backfill: $COUNT filings from ${{ inputs.start_date }} [$(date -u '+%Y-%m-%d')]"
+            git push
+          fi
